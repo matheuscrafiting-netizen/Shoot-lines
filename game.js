@@ -9,8 +9,10 @@ const LANE_HALF = 70;
 const PLAYER_Y = 690;
 const FORM_MAX = 60;         // soldados desenhados no máximo
 const BOSS_EVERY = 60;       // segundos entre bosses
-const PROMOTE_AT = 100;      // com essa quantidade o esquadrão é promovido sozinho
-const TIER_POWER = 5;        // cada patente vale 5× a anterior
+const PROMOTE_AT = 300;      // com essa quantidade o esquadrão sobe um subnível sozinho
+const TIER_POWER = 3;        // cada subnível (I..V) vale 3× o anterior
+const SUBLEVELS = 5;
+const ROMAN = ['I', 'II', 'III', 'IV', 'V'];
 const MAX_FIRE_RATE = 12;    // acima disso a cadência extra vira dano
 const PERK_MAX = 5;
 
@@ -73,6 +75,17 @@ const RANK_SKILLS = [
 ];
 const SKILL_CD = { shield: 12, grenade: 6, medic: 8, air: 15 };
 
+// Ameaças permanentes: a partir de General, cada subida de subnível adiciona uma
+const THREATS = {
+  horde:   { icon: '👥', name: 'Horda',            desc: '+25% de inimigos por onda' },
+  armor:   { icon: '🪨', name: 'Couraça',          desc: 'Inimigos com +40% de vida' },
+  fury:    { icon: '😡', name: 'Fúria',            desc: 'Inimigos causam +40% de dano' },
+  haste:   { icon: '💨', name: 'Pressa',           desc: 'Inimigos 10% mais rápidos' },
+  elites:  { icon: '👑', name: 'Elites',           desc: 'Mais inimigos com habilidades' },
+  warlord: { icon: '💀', name: 'Senhor da guerra', desc: 'Bosses com +50% de vida e mais agressivos' },
+};
+const GENERAL_RANK = 8;
+
 const ENEMY_TYPES = {
   bug:     { hp: 3,  spd: 0.85, dmg: 1, r: 14, color: '#69db7c', minD: 1 },
   runner:  { hp: 2,  spd: 1.6,  dmg: 1, r: 11, color: '#ffd43b', minD: 1.6 },
@@ -124,14 +137,25 @@ const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const shuffle = arr => arr.sort(() => Math.random() - 0.5);
 
-const SUFFIX = ['', 'k', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
+// Escala de números de jogo: 12.3K, 4.5M, 6.7B, 8.9T, depois aa, ab, ... zz
+const SUFFIX = ['', 'K', 'M', 'B', 'T'];
+function suffix(e) {
+  if (e < SUFFIX.length) return SUFFIX[e];
+  const i = e - SUFFIX.length;
+  return String.fromCharCode(97 + Math.floor(i / 26) % 26) + String.fromCharCode(97 + i % 26);
+}
 function fmt(n) {
+  if (!isFinite(n)) return '∞';
   n = Math.floor(n);
   if (n < 1e4) return String(n);
   const e = Math.floor(Math.log10(n) / 3);
-  if (e >= SUFFIX.length) return n.toExponential(1);
-  return (n / Math.pow(1000, e)).toFixed(1) + SUFFIX[e];
+  const v = n / Math.pow(10, e * 3);
+  return (v >= 100 ? v.toFixed(0) : v.toFixed(1)) + suffix(e);
 }
+const fmtTime = t => {
+  const s = Math.floor(t), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+};
 const fmtMul = x => x < 100 ? x.toFixed(1) : fmt(x);
 
 function nearestLane(x) {
@@ -187,7 +211,7 @@ function newGame() {
   g = {
     t: 0, soldiers: 5, tier: 0, lane: 1, x: LANES[1],
     weapon: 0, rateMul: 1, dmgMul: 1, fireCd: 0,
-    locked: false, perks: {}, lastPerk: null, pendingEvo: 0, choice: null, parts: 0,
+    locked: false, perks: {}, lastPerk: null, pendingEvo: 0, choice: null, parts: 0, threats: {}, saveT: 0,
     skills: { shield: 0, grenade: 2, turret: 0, medic: 8, air: 5 }, shieldUp: false,
     bullets: [], enemies: [], gates: [], crates: [], projectiles: [],
     particles: [], texts: [], zaps: [], rings: [], grenades: [], planes: [],
@@ -202,34 +226,43 @@ const diff = () => 1 + g.t / 35 + g.bossesKilled * 0.3;
 const worldSpeed = () => Math.min(90 + diff() * 7, 190);
 // Crescimento infinito dos inimigos em rampa suave (~+45% por minuto no
 // começo, acelerando devagar), sem paredões repentinos.
-const growth = () => Math.exp(0.006 * g.t + 0.000006 * g.t * g.t);
+const growth = () => Math.exp(0.008 * g.t + 0.000008 * g.t * g.t);
 const tierMul = () => Math.pow(TIER_POWER, g.tier);
+const rankOf = step => Math.floor(step / SUBLEVELS);      // 0 = Recruta ... 8 = General
+const rank = () => rankOf(g.tier);
+const threat = k => g.threats[k] || 0;
+const threatCount = () => Object.values(g.threats).reduce((a, b) => a + b, 0);
 const power = () => g.soldiers * tierMul();
 // Os inimigos acompanham em parte o poder de fogo do esquadrão (vida) e a
 // força dele (dano): cada melhoria ainda vale ~40% do ganho, e o tempo
 // (growth) decide o fim.
 const DPS_REF = 12;   // poder de fogo inicial
-// o acompanhamento entra aos poucos nos primeiros 4 minutos
-const enemyScale = () => growth() * Math.max(1, Math.pow(dps() / DPS_REF, 0.6 * Math.min(1, g.t / 240)));
-const enemyDmgScale = () => growth() * Math.max(1, Math.pow(power() / 20, 0.8));
+// o acompanhamento entra aos poucos nos primeiros 4 minutos (até 60%) e
+// continua subindo até 85% aos 9 min: quem dispara na frente não foge para sempre.
+// Vida e dano usam o mesmo ritmo, para não surgir um paredão de dano.
+const trackExp = () => 0.6 * Math.min(1, g.t / 240) + 0.25 * clamp((g.t - 240) / 300, 0, 1);
+const enemyScale = () => growth() * Math.pow(1.4, threat('armor')) * Math.max(1, Math.pow(dps() / DPS_REF, trackExp()));
+const enemyDmgScale = () => growth() * Math.pow(1.4, threat('fury')) * Math.max(1, Math.pow(power() / 20, Math.max(0.8, trackExp())));
 const perkLevels = () => Object.values(g.perks).reduce((a, b) => a + b, 0);
 const perk = k => g.perks[k] || 0;
-const rankSize = () => Math.min(1.9, 1 + 0.12 * g.tier);
-const skillCd = k => SKILL_CD[k] / (g.tier >= 8 ? 2 : 1);
+const rankSize = () => Math.min(1.9, 1 + 0.1 * rank() + 0.02 * (g.tier % SUBLEVELS));
+const skillCd = k => SKILL_CD[k] / (rank() >= 8 ? 2 : 1);
 const isGhost = e => e.mod === 'ghost' && e.ghostT % 2.4 > 1.4;
 const shownSoldiers = () => Math.max(1, Math.min(g.soldiers, Math.floor(FORM_MAX / (rankSize() ** 2))));
 
-function rankInfo(tier) {
-  const r = RANKS[Math.min(tier, RANKS.length - 1)];
-  const extra = tier - (RANKS.length - 1);
-  return { ...r, name: extra > 0 ? r.name + ' ★' + (extra + 1) : r.name };
+function rankInfo(step) {
+  const idx = Math.min(rankOf(step), RANKS.length - 1);
+  const r = RANKS[idx];
+  const extra = step - (RANKS.length * SUBLEVELS - 1);
+  const name = extra > 0 ? r.name + ' ★' + extra : r.name + ' ' + ROMAN[step % SUBLEVELS];
+  return { ...r, name, idx, sub: Math.min(step % SUBLEVELS, SUBLEVELS - 1) };
 }
 
 function fireStats() {
   const w = WEAPONS[g.weapon];
   const rate = w.rate * g.rateMul;
   const fireRate = Math.min(rate, MAX_FIRE_RATE);
-  const training = g.tier >= 1 ? 1.15 : 1;
+  const training = rank() >= 1 ? 1.15 : 1;
   const dmg = w.dmg * g.dmgMul * training * (1 + 0.1 * perkLevels()) * (rate / fireRate);
   return { w, fireRate, dmg };
 }
@@ -264,7 +297,7 @@ function loseSoldiers(n, x) {
 
 // Dano em "força": soldados de patente alta aguentam mais.
 function losePower(p, x) {
-  if (g.tier >= 4) p *= 0.8;   // Colete
+  if (rank() >= 4) p *= 0.8;   // Colete
   const per = p / tierMul();
   const n = Math.floor(per) + (Math.random() < per % 1 ? 1 : 0);
   if (n > 0) loseSoldiers(n, x);
@@ -285,7 +318,7 @@ function blockHit(x) {
 // Golpe que tira uma fração do esquadrão (bosses)
 function loseFraction(f, min, x) {
   if (blockHit(x)) return;
-  if (g.tier >= 4) f *= 0.8;
+  if (rank() >= 4) f *= 0.8;
   loseSoldiers(Math.max(min, Math.ceil(g.soldiers * f)), x);
 }
 
@@ -297,8 +330,17 @@ function promote(divisor, x) {
   burst(x, PLAYER_Y - 10, '#ffd43b', 30, 240);
   g.flash = 0.25; g.flashColor = '#ffe066';
   sfx(440, 0.25, 'triangle', 0.08, 500);
-  const sk = RANK_SKILLS.find(k => k.tier === g.tier);
+  const sk = g.tier % SUBLEVELS === 0 && RANK_SKILLS.find(k => k.tier === rank());
   if (sk) g.banner = { text: 'Nova habilidade: ' + sk.icon + ' ' + sk.name, tip: sk.desc, life: 2.6, good: true };
+  if (g.tier === GENERAL_RANK * SUBLEVELS) addThreat();   // chegou em General I
+}
+
+// A partir de General: uma ameaça permanente ao chegar e outra a cada boss derrotado
+function addThreat() {
+  const k = pick(Object.keys(THREATS));
+  g.threats[k] = threat(k) + 1;
+  g.banner = { text: 'Nova ameaça: ' + THREATS[k].icon + ' ' + THREATS[k].name, tip: THREATS[k].desc, life: 2.8 };
+  sfx(110, 0.5, 'sawtooth', 0.08, -40);
 }
 
 function addSoldiers(n) {
@@ -306,7 +348,33 @@ function addSoldiers(n) {
   while (g.soldiers >= PROMOTE_AT) promote(TIER_POWER, g.x);
 }
 
+// ---------------------------------------------------------------------------
+// Salvar e continuar
+// ---------------------------------------------------------------------------
+const SAVE_KEY = 'shootlines-save';
+const SAVE_FIELDS = ['t', 'soldiers', 'tier', 'weapon', 'rateMul', 'dmgMul', 'locked', 'perks', 'lastPerk',
+  'pendingEvo', 'parts', 'skills', 'shieldUp', 'score', 'dist', 'rows', 'bossCd', 'bossesKilled', 'threats', 'lane'];
+
+function saveGame() {
+  if (!g || state === 'over' || state === 'menu' || g.soldiers <= 0) return;
+  try {
+    const o = {};
+    for (const k of SAVE_FIELDS) o[k] = g[k];
+    if (g.boss) o.bossCd = 4;   // o boss em andamento volta do começo
+    localStorage.setItem(SAVE_KEY, JSON.stringify(o));
+  } catch (e) { /* sem storage */ }
+}
+
+function loadSave() {
+  try { return JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { return null; }
+}
+
+function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* sem storage */ }
+}
+
 function gameOver() {
+  clearSave();
   g.soldiers = 0;
   state = 'over';
   g.overT = 0;
@@ -323,7 +391,7 @@ function gameOver() {
 // ---------------------------------------------------------------------------
 function pickMod(d) {
   const avail = Object.keys(MODS).filter(k => MODS[k].minD <= d);
-  const chance = clamp((d - 2) * 0.06, 0, 0.5);
+  const chance = clamp((d - 2) * 0.06 + 0.1 * threat('elites'), 0, 0.9);
   return avail.length && Math.random() < chance ? pick(avail) : null;
 }
 
@@ -336,7 +404,7 @@ function spawnEnemy(typeKey, lane, y, mod = null, hpMul = 1) {
     id: g.nextId++, type: typeKey, lane, x: LANES[lane], tx: LANES[lane], y,
     hp, maxHp: hp, r: T.r * (elite ? 1.3 : 1), color: T.color,
     dmg: T.dmg * (1 + (d - 1) * 0.2) * enemyDmgScale() * (elite ? 2 : 1),
-    spd: T.spd * worldSpeed() * rand(0.92, 1.08),
+    spd: T.spd * worldSpeed() * Math.min(2, Math.pow(1.1, threat('haste'))) * rand(0.92, 1.08),
     switchCd: T.switcher ? rand(1.5, 3) : Infinity,
     wob: Math.random() * 6, hitT: 0, burn: 0, burnDps: 0, slow: 0, slowF: 1,
     mod, shield: mod === 'shield' ? 3 + Math.floor(d / 2) : 0,
@@ -352,7 +420,7 @@ function spawnWave() {
   const lanesCount = Math.random() < Math.min(0.6, 0.15 + d * 0.08) ? 2 : 1;
   const lanes = shuffle([0, 1, 2]).slice(0, lanesCount);
   for (const lane of lanes) {
-    const n = rint(1, Math.min(6, 1 + Math.floor(d * 0.7)));
+    const n = Math.round(rint(1, Math.min(6, 1 + Math.floor(d * 0.7))) * (1 + 0.25 * threat('horde')));
     const type = pick(types);
     for (let i = 0; i < n; i++) spawnEnemy(type, lane, -30 - i * (ENEMY_TYPES[type].r * 2 + 8), pickMod(d));
   }
@@ -410,7 +478,7 @@ function spawnBoss() {
   // pelo menos ~10 s (+2 s por boss) de tiro direto, mesmo com esquadrão enorme
   // entre ~8 s e ~15 s de tiro direto no 1º boss, crescendo a cada boss:
   // nunca morre na hora e nunca fica impossível
-  const hp = Math.ceil(clamp(700 * B.hp * Math.pow(1.6, n) * enemyScale(), dps() * (8 + 3 * n), dps() * (15 + 4 * n)));
+  const hp = Math.ceil(clamp(700 * B.hp * Math.pow(1.6, n) * enemyScale(), dps() * (8 + 3 * n), dps() * (15 + 4 * n)) * Math.pow(1.5, threat('warlord')));
   const lane = 1;
   g.boss = {
     kind: B.kind, name: B.name, color: B.color, lane, x: LANES[lane], tx: LANES[lane],
@@ -530,8 +598,8 @@ function applyEffect(c, x) {
       gainParts(1, x);
       break;
     case 'rank':
-      // promoção pelo portão: ÷4 soldados, mas cada um vale 5× (ganho de 25%)
-      promote(4, x);
+      // promoção pelo portão: ÷2,5 soldados, mas cada um vale 3× (ganho de 20%)
+      promote(2.5, x);
       break;
     case 'rate':
       // bônus somam (sem limite); penalidades reduzem proporcionalmente
@@ -568,7 +636,7 @@ function fire() {
   const shown = shownSoldiers();
   const explosive = perk('explosive');
   const base = {
-    color: bulletColor(w), size: w.size * (1 + 0.1 * Math.min(g.tier, 6)),
+    color: bulletColor(w), size: w.size * (1 + 0.1 * Math.min(rank(), 6)),
     pierce: (w.pierce || 0) + perk('pierce'),
     splash: Math.max(w.splash || 0, explosive ? 30 + 12 * explosive : 0),
     splashMul: w.splash ? 0.6 + 0.1 * explosive : 0.3 + 0.1 * explosive,
@@ -948,6 +1016,8 @@ function update(dt) {
   g.rings = g.rings.filter(r => r.life > 0);
   if (g.banner) { g.banner.life -= dt; if (g.banner.life <= 0) g.banner = null; }
 
+  g.saveT += dt;
+  if (g.saveT > 5) { g.saveT = 0; saveGame(); }
   if (g.pendingEvo > 0) openChoice();
 }
 
@@ -956,19 +1026,19 @@ function update(dt) {
 // ---------------------------------------------------------------------------
 function updateSkills(dt, myLane) {
   const s = g.skills;
-  if (g.tier >= 2 && !g.shieldUp) {
+  if (rank() >= 2 && !g.shieldUp) {
     s.shield -= dt;
     if (s.shield <= 0) g.shieldUp = true;
   }
-  if (g.tier >= 3) {
+  if (rank() >= 3) {
     s.grenade -= dt;
     if (s.grenade <= 0) s.grenade = throwGrenade(myLane) ? skillCd('grenade') : 0.5;
   }
-  if (g.tier >= 5) {
+  if (rank() >= 5) {
     s.turret -= dt;
     if (s.turret <= 0) { s.turret = 0.4; turretShot(myLane); }
   }
-  if (g.tier >= 6) {
+  if (rank() >= 6) {
     s.medic -= dt;
     if (s.medic <= 0) {
       s.medic = skillCd('medic');
@@ -977,7 +1047,7 @@ function updateSkills(dt, myLane) {
       addSoldiers(n);
     }
   }
-  if (g.tier >= 7) {
+  if (rank() >= 7) {
     s.air -= dt;
     if (s.air <= 0) { s.air = skillCd('air'); airStrike(); }
   }
@@ -1158,6 +1228,7 @@ function updateBoss(dt, myLane) {
     if (bo.atkCd <= 0) {
       bossAttack(bo, myLane);
       if (bo.hp / bo.maxHp < 0.33) bo.atkCd *= 0.7;   // fúria no fim da luta
+      bo.atkCd *= Math.pow(0.85, threat('warlord'));
     }
   }
 
@@ -1202,7 +1273,8 @@ function updateBoss(dt, myLane) {
     g.bossesKilled++;
     g.boss = null;
     g.projectiles = [];
-    g.bossCd = BOSS_EVERY;
+    g.bossCd = rank() >= GENERAL_RANK ? 45 : BOSS_EVERY;
+    if (rank() >= GENERAL_RANK) addThreat();
     g.gateCd = 1.5;
     g.spawnCd = 3;   // respiro depois do boss
     sfx(150, 0.9, 'sawtooth', 0.1, -120);
@@ -1524,8 +1596,8 @@ function drawSoldier(rank, leader, bob, tier) {
 // carimbado na tela: bem mais leve com esquadrões grandes.
 const SPRITE_RES = 4;
 const spriteCache = new Map();
-function soldierSprite(tier, leader) {
-  const t = Math.min(tier, RANKS.length - 1);
+function soldierSprite(step, leader) {
+  const t = Math.min(rankOf(step), RANKS.length - 1);
   const key = t + (leader ? 'L' : '');
   let c = spriteCache.get(key);
   if (c) return c;
@@ -1536,7 +1608,7 @@ function soldierSprite(tier, leader) {
   ctx = c.getContext('2d');
   ctx.scale(SPRITE_RES, SPRITE_RES);
   ctx.translate(12, 32);
-  drawSoldier(rankInfo(t), leader, 0, t);
+  drawSoldier(RANKS[t], leader, 0, t);
   ctx = main;
   spriteCache.set(key, c);
   return c;
@@ -1572,7 +1644,7 @@ function drawSquad() {
   const bw = 30 + label.length * 12;
   panel(lp.x - bw / 2, lp.y - 42, bw, 30, 15, rank.helmet, 3);
   text(label, lp.x, lp.y - 27, 20, '#fff');
-  if (g.tier > 0) text(rank.name, lp.x, lp.y - 56, 14, shade(rank.color, 0.2));
+  text(rank.name, lp.x, lp.y - 56, 14, shade(rank.color, 0.2));
 }
 
 // ---------------------------------------------------------------------------
@@ -1796,7 +1868,7 @@ function drawCrate(cr) {
   circle(0, -40, 2);
   const icon = cr.reward.kind === 'weapon' ? '🔧' : cr.reward.kind === 'add' ? '👥' : '⚡';
   emoji(icon, 0, -20, 18);
-  text(fmt(Math.ceil(cr.hp)), 0, 16, 16, '#fff');
+  text(pct(cr.hp, cr.maxHp), 0, 16, 16, '#fff');
   ctx.restore();
 }
 
@@ -2031,8 +2103,6 @@ function drawProjectiles() {
       ctx.fillStyle = '#8d6e4f';
       ctx.fill();
       ink(3);
-      ctx.rotate(-p.rot);
-      text(fmt(Math.ceil(p.hp)), 0, 0, 13, '#fff');
     } else if (p.kind === 'fire') {
       ctx.fillStyle = 'rgba(255, 146, 43, .45)';
       circle(0, 0, p.r * 1.35);
@@ -2166,6 +2236,13 @@ function drawEffects() {
 const LOCK_BTN = { x: W - 126, y: H - 56, w: 116, h: 42 };
 const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
+// Botões tocáveis desenhados neste quadro (recriados a cada desenho)
+let uiButtons = [];
+function uiButton(x, y, w, h, top, bottom, label, size, action) {
+  button3d(x, y, w, h, top, bottom, label, size);
+  uiButtons.push({ x, y, w, h: h + 5, action });
+}
+
 function badge(x, y, w, h, border, icon, label, labelColor) {
   panel(x, y, w, h, 9, '#2c3e78', 2.5);
   roundRect(x + 2.5, y + 2.5, w - 5, h - 5, 7);
@@ -2176,16 +2253,37 @@ function badge(x, y, w, h, border, icon, label, labelColor) {
   if (label) text(label, x + w - 11, y + h / 2, 14, labelColor);
 }
 
+function bar(x, y, w, h, frac, color) {
+  roundRect(x, y, w, h, h / 2);
+  ctx.fillStyle = '#2a1840';
+  ctx.fill();
+  ink(2);
+  if (frac > 0) {
+    roundRect(x + 2, y + 2, (w - 4) * Math.min(1, frac), h - 4, (h - 4) / 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    roundRect(x + 3, y + 3, (w - 6) * Math.min(1, frac), (h - 6) * 0.4, 2);
+    ctx.fillStyle = 'rgba(255,255,255,.3)';
+    ctx.fill();
+  }
+}
+
+const pct = (v, max) => Math.max(0, Math.ceil(v / max * 100)) + '%';
+
 function drawHUD() {
-  // topo: moedas (pontos), nível e distância
-  panel(8, 6, 150, 36, 14, '#27407a');
-  blob(26, 24, 13, '#ffcc33', 2.5);
-  text('★', 26, 24, 15, '#fff3bf');
-  fitText(fmt(g.score), 46, 24, 104, 20, '#ffe066', 'left');
-  panel(W / 2 - 56, 4, 112, 40, 14, '#7048e8');
-  text('Nível ' + Math.floor(diff()), W / 2, 24, 20, '#fff');
-  panel(W - 128, 6, 120, 36, 14, '#27407a');
-  fitText(fmt(g.dist) + ' m', W - 68, 24, 104, 19, '#a5d8ff');
+  // topo: menu, pontos, nível e tempo de jogo
+  panel(8, 6, 40, 36, 12, '#7048e8');
+  ctx.fillStyle = '#fff';
+  for (let i = 0; i < 3; i++) { roundRect(18, 14 + i * 8, 20, 4, 2); ctx.fill(); ink(1.5); }
+  uiButtons.push({ x: 4, y: 2, w: 48, h: 44, action: openMenu });
+  panel(54, 6, 140, 36, 14, '#27407a');
+  blob(72, 24, 12, '#ffcc33', 2.5);
+  text('★', 72, 24, 14, '#fff3bf');
+  fitText(fmt(g.score), 90, 24, 98, 19, '#ffe066', 'left');
+  panel(200, 4, 108, 40, 14, '#7048e8');
+  fitText('Nível ' + Math.floor(diff()), 254, 24, 96, 19, '#fff');
+  panel(314, 6, 128, 36, 14, '#27407a');
+  fitText('⏱ ' + fmtTime(g.t), 378, 24, 112, 19, '#a5d8ff');
 
   // barra inferior
   roundRect(-4, H - 66, W + 8, 72, 16);
@@ -2198,49 +2296,18 @@ function drawHUD() {
   // barra de peças (estilo elixir)
   const need = partsNeed();
   const bx = 12, by = H - 20, bw = LOCK_BTN.x - 26, bh = 12;
-  roundRect(bx, by, bw, bh, 6);
-  ctx.fillStyle = '#2a1840';
-  ctx.fill();
-  ink(2);
-  const frac = Math.min(1, g.parts / need);
-  if (frac > 0) {
-    roundRect(bx + 2, by + 2, (bw - 4) * frac, bh - 4, 4);
-    ctx.fillStyle = '#d63cf0';
-    ctx.fill();
-  }
+  bar(bx, by, bw, bh, g.parts / need, '#d63cf0');
   ctx.strokeStyle = 'rgba(0,0,0,.35)';
   ctx.lineWidth = 1.5;
-  for (let i = 1; i < need; i++) {
+  for (let i = 1; i < need && need <= 30; i++) {
     ctx.beginPath();
     ctx.moveTo(bx + bw * i / need, by + 2);
     ctx.lineTo(bx + bw * i / need, by + bh - 2);
     ctx.stroke();
   }
   text(`🔧 ${g.parts}/${need}`, bx + bw - 4, by - 1, 12, '#f3d9fa', 'right');
-  if (g.locked) button3d(LOCK_BTN.x, LOCK_BTN.y, LOCK_BTN.w, LOCK_BTN.h, '#51cf66', '#2b8a3e', '🔒 Travada', 17);
-  else button3d(LOCK_BTN.x, LOCK_BTN.y, LOCK_BTN.w, LOCK_BTN.h, '#ffd43b', '#e8a200', '🔓 Travar', 17);
-
-  // evoluções ativas
-  let px = 10;
-  for (const k of Object.keys(g.perks)) {
-    badge(px, 84, 44, 28, PERKS[k].color, PERKS[k].icon, String(g.perks[k]), '#fff');
-    px += 48;
-  }
-
-  // habilidades de patente (canto direito)
-  let sx = W - 10 - 32;
-  for (const sk of RANK_SKILLS.filter(k => k.tier <= g.tier).reverse()) {
-    const cd = sk.key === 'shield' ? (g.shieldUp ? 0 : g.skills.shield / skillCd('shield'))
-      : SKILL_CD[sk.key] ? g.skills[sk.key] / skillCd(sk.key) : 0;
-    badge(sx, 116, 32, 28, '#ffd43b', sk.icon);
-    if (cd > 0) {
-      const f = clamp(cd, 0, 1);
-      roundRect(sx + 2, 118 + 24 * (1 - f), 28, 24 * f, 5);
-      ctx.fillStyle = 'rgba(10, 10, 30, .65)';
-      ctx.fill();
-    }
-    sx -= 35;
-  }
+  if (g.locked) uiButton(LOCK_BTN.x, LOCK_BTN.y, LOCK_BTN.w, LOCK_BTN.h, '#51cf66', '#2b8a3e', '🔒 Travada', 17, toggleLock);
+  else uiButton(LOCK_BTN.x, LOCK_BTN.y, LOCK_BTN.w, LOCK_BTN.h, '#ffd43b', '#e8a200', '🔓 Travar', 17, toggleLock);
 
   const bo = g.boss;
   if (bo) {
@@ -2258,8 +2325,8 @@ function drawHUD() {
       ctx.fill();
     }
     blob(36, 64, 14, '#ffd43b', 2.5);
-    text('👑', 36, 64, 13, '#fff');
-    fitText(bo.name + '  ' + fmt(Math.max(0, bo.hp)), W / 2, 64, W - 120, 14, '#fff');
+    emoji('👑', 36, 65, 13);
+    fitText(bo.name + '  ' + pct(bo.hp, bo.maxHp), W / 2, 64, W - 120, 15, '#fff');
   } else if (g.bossCd < 8) {
     text('Boss chegando em ' + Math.ceil(g.bossCd) + 's', W / 2, 66, 17, '#ff8787');
   }
@@ -2318,7 +2385,6 @@ function drawChoice() {
     ctx.fillStyle = rar;
     ctx.fill();
     ink(3.5);
-    // arte
     roundRect(c.x + 8, c.y + 8, c.w - 16, 104, 10);
     const gr = ctx.createLinearGradient(0, c.y + 8, 0, c.y + 112);
     gr.addColorStop(0, shade(P.color, 0.25));
@@ -2327,16 +2393,15 @@ function drawChoice() {
     ctx.fill();
     ink(2.5);
     emoji(P.icon, c.x + c.w / 2, c.y + 60, 52);
-    // nível
     panel(c.x + c.w / 2 - 40, c.y + 100, 80, 26, 12, '#27407a', 2.5);
     text(`Nv ${lvl} → ${lvl + 1}`, c.x + c.w / 2, c.y + 113, 14, '#fff');
-    // nome e descrição
     const nameLines = wrapLines(P.name, c.w - 16, 18);
     nameLines.forEach((ln, j) => text(ln, c.x + c.w / 2, c.y + 146 + j * 21, 18, '#fff'));
     const descTop = c.y + 150 + nameLines.length * 21;
     wrapLines(P.desc(lvl + 1), c.w - 18, 13).slice(0, 4).forEach((ln, j) =>
       text(ln, c.x + c.w / 2, descTop + j * 17, 13, '#fff9db'));
     text(String(i + 1), c.x + 16, c.y + 18, 13, 'rgba(255,255,255,.85)');
+    uiButtons.push({ ...c, action: () => choosePerk(i) });
   });
   text('Toque em uma carta (ou 1, 2, 3)', W / 2, 540, 16, '#c5d3ff');
 }
@@ -2346,59 +2411,147 @@ function drawTitle(y) {
   text('LINES', W / 2, y + 62, 64, '#ffffff');
 }
 
+function pulseButton(cx, cy, w, h, top, bottom, label, size, action) {
+  const pulse = 1 + 0.04 * Math.sin(performance.now() / 200);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(pulse, pulse);
+  button3d(-w / 2, -h / 2, w, h, top, bottom, label, size);
+  ctx.restore();
+  uiButtons.push({ x: cx - w / 2, y: cy - h / 2, w, h: h + 5, action });
+}
+
 function drawMenu() {
   ctx.fillStyle = 'rgba(16, 22, 48, .55)';
   ctx.fillRect(0, 0, W, H);
-  drawTitle(120);
-  panel(26, 240, W - 52, 300, 18, 'rgba(39, 64, 122, .95)', 3.5);
+  drawTitle(110);
+  panel(26, 225, W - 52, 296, 18, 'rgba(39, 64, 122, .95)', 3.5);
   const lines = [
     ['🛣️', 'Seu esquadrão avança por 3 faixas'],
     ['🟩', 'Portões verdes: soldados, armas, dano'],
     ['🟥', 'Evite os vermelhos e os bichos'],
     ['🏃', 'Bicho que escapa também tira soldados'],
-    ['🎖️', '100 soldados = nova patente e habilidade'],
+    ['🎖️', '300 soldados = sobe de patente (I a V)'],
     ['🔧', 'Junte peças para trocar ou evoluir a arma'],
     ['🔒', 'Trave a arma para ganhar evoluções'],
     ['👆', '← → / A D ou toque na faixa  •  L trava'],
   ];
   lines.forEach(([ic, ln], i) => {
-    emoji(ic, 50, 268 + i * 34, 17);
-    fitText(ln, 70, 268 + i * 34, W - 110, 15, '#fff', 'left');
+    emoji(ic, 50, 252 + i * 34, 17);
+    fitText(ln, 70, 252 + i * 34, W - 110, 15, '#fff', 'left');
   });
-  const pulse = 1 + 0.04 * Math.sin(performance.now() / 200);
-  ctx.save();
-  ctx.translate(W / 2, 610);
-  ctx.scale(pulse, pulse);
-  button3d(-110, -32, 220, 64, '#ffd43b', '#e8a200', 'JOGAR', 32);
-  ctx.restore();
-  if (best) text('🏆 Recorde: ' + fmt(best), W / 2, 700, 18, '#ffe066');
+  const save = loadSave();
+  if (save) {
+    pulseButton(W / 2, 572, 250, 58, '#51cf66', '#2b8a3e', 'CONTINUAR', 26, continueGame);
+    fitText(`${rankInfo(save.tier).name}  •  ⏱ ${fmtTime(save.t)}  •  ${fmt(save.soldiers)} soldados`, W / 2, 618, W - 60, 14, '#d3f9d8');
+    uiButton(W / 2 - 110, 642, 220, 50, '#ffd43b', '#e8a200', 'NOVO JOGO', 22, start);
+  } else {
+    pulseButton(W / 2, 600, 220, 64, '#ffd43b', '#e8a200', 'JOGAR', 32, start);
+  }
+  if (best) text('🏆 Recorde: ' + fmt(best), W / 2, 725, 18, '#ffe066');
   text('versão ' + VERSION, W / 2, 770, 12, '#c5d3ff');
 }
 
-function drawOverlay(title, lines, sub, color = '#ffd43b') {
-  ctx.fillStyle = 'rgba(16, 22, 48, .75)';
+// Menu de pausa: situação do esquadrão, evoluções, habilidades e ameaças.
+// Tocar num ícone mostra a descrição.
+function drawPauseMenu() {
+  ctx.fillStyle = 'rgba(16, 22, 48, .86)';
   ctx.fillRect(0, 0, W, H);
-  const h = 90 + lines.length * 36;
-  panel(30, 200, W - 60, h, 18, 'rgba(39, 64, 122, .97)', 3.5);
-  text(title, W / 2, 200, 40, color);
-  lines.forEach((l, i) => fitText(l, W / 2, 262 + i * 36, W - 100, 19, '#fff'));
-  if (sub) {
-    const pulse = 1 + 0.04 * Math.sin(performance.now() / 200);
-    ctx.save();
-    ctx.translate(W / 2, 250 + h + 50);
-    ctx.scale(pulse, pulse);
-    button3d(-120, -30, 240, 60, '#ffd43b', '#e8a200', sub, 24);
-    ctx.restore();
+  text('PAUSADO', W / 2, 46, 38, '#ffd43b');
+
+  // esquadrão e arma
+  const r = rankInfo(g.tier);
+  panel(16, 76, W - 32, 168, 16, '#27407a', 3);
+  fitText('🎖️ ' + r.name, 30, 100, 250, 20, shade(r.color, 0.25), 'left');
+  text('⏱ ' + fmtTime(g.t), W - 30, 100, 18, '#a5d8ff', 'right');
+  bar(30, 118, W - 60, 16, g.soldiers / PROMOTE_AT, r.color);
+  fitText(`${fmt(g.soldiers)} / ${PROMOTE_AT} soldados → ${rankInfo(g.tier + 1).name}`, W / 2, 146, W - 60, 13, '#fff');
+  const w = WEAPONS[g.weapon];
+  fitText('🔫 ' + w.name + (g.locked ? ' 🔒' : '') + `   🔧 ${g.parts}/${partsNeed()}`, 30, 172, W - 60, 16, shade(bulletColor(w), 0.2), 'left');
+  fitText(`Dano ×${fmtMul(g.dmgMul)}  •  Cadência ×${fmtMul(g.rateMul)}  •  Poder ${fmt(dps())}/s`, 30, 196, W - 60, 13, '#c5d3ff', 'left');
+  fitText(`📏 ${fmt(g.dist)} m   •   👑 ${g.bossesKilled} bosses   •   ⭐ ${fmt(g.score)}`, 30, 220, W - 60, 13, '#c5d3ff', 'left');
+
+  // evoluções
+  panel(16, 254, W - 32, 128, 16, '#27407a', 3);
+  text('Evoluções da arma', 30, 274, 15, '#ffd43b', 'left');
+  const perks = Object.keys(g.perks);
+  if (!perks.length) {
+    fitText('Trave a arma 🔒 e junte peças 🔧 para evoluir', W / 2, 322, W - 70, 14, '#c5d3ff');
+  }
+  perks.forEach((k, i) => {
+    const x = 28 + (i % 5) * 80, y = 290 + Math.floor(i / 5) * 44;
+    const P = PERKS[k];
+    badge(x, y, 72, 38, P.color, P.icon, 'Nv' + g.perks[k], '#fff');
+    uiButtons.push({ x, y, w: 72, h: 38, action: () => { g.info = { icon: P.icon, name: `${P.name} (nível ${g.perks[k]})`, desc: P.desc(g.perks[k]) }; } });
+  });
+
+  // habilidades de patente
+  panel(16, 392, W - 32, 96, 16, '#27407a', 3);
+  text('Habilidades da patente', 30, 412, 15, '#ffd43b', 'left');
+  RANK_SKILLS.forEach((sk, i) => {
+    const x = 26 + i * 50, y = 428;
+    const has = rank() >= sk.tier;
+    ctx.globalAlpha = has ? 1 : 0.35;
+    badge(x, y, 44, 44, has ? '#ffd43b' : '#868e96', sk.icon);
+    ctx.globalAlpha = 1;
+    uiButtons.push({ x, y, w: 44, h: 44, action: () => {
+      g.info = { icon: sk.icon, name: sk.name + (has ? '' : ` (libera em ${RANKS[sk.tier].name})`), desc: sk.desc };
+    } });
+  });
+
+  // ameaças permanentes
+  panel(16, 498, W - 32, 66, 16, threatCount() ? '#6b1d2a' : '#27407a', 3);
+  text('Ameaças permanentes', 30, 516, 15, '#ff8787', 'left');
+  const tk = Object.keys(g.threats);
+  if (!tk.length) fitText('Nenhuma — elas começam ao chegar em General', W / 2, 544, W - 70, 13, '#c5d3ff');
+  tk.forEach((k, i) => {
+    const x = 28 + i * 66, y = 530;
+    const T = THREATS[k];
+    badge(x, y, 60, 28, '#ff6b6b', T.icon, '×' + g.threats[k], '#fff');
+    uiButtons.push({ x, y, w: 60, h: 28, action: () => { g.info = { icon: T.icon, name: `${T.name} ×${g.threats[k]}`, desc: T.desc }; } });
+  });
+
+  // descrição do item tocado
+  panel(16, 574, W - 32, 52, 14, '#1e2f5c', 2.5);
+  if (g.info) {
+    fitText(g.info.icon + ' ' + g.info.name, W / 2, 591, W - 60, 15, '#fff');
+    fitText(g.info.desc, W / 2, 611, W - 60, 13, '#ffe066');
+  } else {
+    fitText('Toque num ícone para ver o que ele faz', W / 2, 600, W - 60, 14, '#c5d3ff');
+  }
+
+  uiButton(20, 640, 200, 54, '#ffd43b', '#e8a200', 'CONTINUAR', 22, resume);
+  uiButton(230, 640, 200, 54, '#ff6b6b', '#c92a2a', 'NOVO JOGO', 22, start);
+  uiButton(20, 708, 200, 40, '#4dabf7', '#1c7ed6', muted ? '🔇 Som: off' : '🔊 Som: on', 17, () => { muted = !muted; });
+  uiButton(230, 708, 200, 40, '#868e96', '#495057', '🏠 Menu inicial', 17, toMenu);
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(16, 22, 48, .78)';
+  ctx.fillRect(0, 0, W, H);
+  panel(30, 190, W - 60, 300, 18, 'rgba(39, 64, 122, .97)', 3.5);
+  text('FIM DE JOGO', W / 2, 190, 40, '#ff8787');
+  [
+    '⭐ Pontuação: ' + fmt(g.score),
+    '⏱ Tempo: ' + fmtTime(g.t) + '   📏 ' + fmt(g.dist) + ' m',
+    '🎖️ Patente: ' + rankInfo(g.tier).name,
+    '👑 Bosses derrotados: ' + g.bossesKilled,
+    '🏆 Recorde: ' + fmt(best),
+  ].forEach((l, i) => fitText(l, W / 2, 252 + i * 44, W - 100, 19, '#fff'));
+  if (g.overT > 0.8) {
+    pulseButton(W / 2, 560, 250, 60, '#ffd43b', '#e8a200', 'JOGAR DE NOVO', 24, start);
+    uiButton(W / 2 - 100, 616, 200, 44, '#868e96', '#495057', '🏠 Menu inicial', 17, toMenu);
   }
 }
 
 function draw() {
+  uiButtons = [];
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.save();
   if (g && g.shake > 0) ctx.translate(rand(-g.shake, g.shake) * 0.5, rand(-g.shake, g.shake) * 0.5);
-  drawGround(g ? g.scroll : (performance.now() / 8) % 2400);
+  drawGround(g && state !== 'menu' ? g.scroll : (performance.now() / 8) % 2400);
 
-  if (g) {
+  if (g && state !== 'menu') {
     drawTelegraph();
     // desenha de longe para perto
     const items = [];
@@ -2422,7 +2575,7 @@ function draw() {
     ctx.globalAlpha = 1;
   }
   drawFog();
-  if (g) {
+  if (g && state !== 'menu') {
     drawPlanes();
     for (const t of g.texts) {
       const q = proj(t.x, t.y);
@@ -2433,7 +2586,7 @@ function draw() {
   }
   ctx.restore();
 
-  if (g && g.flash > 0) {
+  if (g && g.flash > 0 && state !== 'menu') {
     ctx.globalAlpha = g.flash * 0.6;
     ctx.fillStyle = g.flashColor;
     ctx.fillRect(0, 0, W, H);
@@ -2441,22 +2594,13 @@ function draw() {
   }
 
   if (g && state !== 'menu') drawHUD();
+  // nos menus só valem os botões do próprio menu
+  if (state !== 'play') uiButtons = [];
 
-  if (state === 'menu') {
-    drawMenu();
-  } else if (state === 'paused') {
-    drawOverlay('PAUSADO', ['P / ESC para continuar', 'M para som on/off', 'L para travar a arma'], 'CONTINUAR');
-  } else if (state === 'choose') {
-    drawChoice();
-  } else if (state === 'over') {
-    drawOverlay('FIM DE JOGO', [
-      '⭐ Pontuação: ' + fmt(g.score),
-      '📏 Distância: ' + fmt(g.dist) + ' m',
-      '🎖️ Patente: ' + rankInfo(g.tier).name,
-      '👑 Bosses derrotados: ' + g.bossesKilled,
-      '🏆 Recorde: ' + fmt(best),
-    ], g.overT > 0.8 ? 'JOGAR DE NOVO' : '', '#ff8787');
-  }
+  if (state === 'menu') drawMenu();
+  else if (state === 'paused') drawPauseMenu();
+  else if (state === 'choose') drawChoice();
+  else if (state === 'over') drawGameOver();
 }
 
 // ---------------------------------------------------------------------------
@@ -2482,20 +2626,44 @@ requestAnimationFrame(frame);
 // Controles
 // ---------------------------------------------------------------------------
 function start() {
+  clearSave();
   newGame();
   state = 'play';
   sfx(440, 0.1, 'triangle', 0.06, 300);
 }
 
-function primaryAction() {
-  if (state === 'menu') start();
-  else if (state === 'paused') state = 'play';
-  else if (state === 'over' && g.overT > 0.8) start();
+function continueGame() {
+  const o = loadSave();
+  if (!o) { start(); return; }
+  newGame();
+  Object.assign(g, o);
+  g.x = LANES[g.lane];
+  g.spawnCd = 2.5;
+  g.gateCd = 2;
+  state = 'play';
+  g.banner = { text: 'Partida retomada', tip: 'Prepare-se!', life: 2, good: true };
+  sfx(440, 0.1, 'triangle', 0.06, 300);
+}
+
+function openMenu() {
+  if (state !== 'play') return;
+  g.info = null;
+  state = 'paused';
+  saveGame();
+}
+
+function resume() {
+  if (state === 'paused') state = 'play';
+}
+
+function toMenu() {
+  if (g && state !== 'over') saveGame();
+  state = 'menu';
 }
 
 function togglePause() {
-  if (state === 'play') state = 'paused';
-  else if (state === 'paused') state = 'play';
+  if (state === 'play') openMenu();
+  else if (state === 'paused') resume();
 }
 
 window.addEventListener('keydown', e => {
@@ -2508,7 +2676,12 @@ window.addEventListener('keydown', e => {
   if (state === 'choose' && ['1', '2', '3'].includes(k)) choosePerk(+k - 1);
   if (k === 'p' || k === 'escape') togglePause();
   if (k === 'm') muted = !muted;
-  if (k === 'enter' || k === ' ') { primaryAction(); e.preventDefault(); }
+  if (k === 'enter' || k === ' ') {
+    e.preventDefault();
+    if (state === 'menu') loadSave() ? continueGame() : start();
+    else if (state === 'paused') resume();
+    else if (state === 'over' && g.overT > 0.8) start();
+  }
 });
 
 let dragging = false;
@@ -2522,12 +2695,8 @@ function pointerPos(e) {
 canvas.addEventListener('pointerdown', e => {
   e.preventDefault();
   const p = pointerPos(e);
-  if (state === 'choose') {
-    for (let i = 0; i < 3; i++) if (inRect(CARD(i), p.x, p.y)) choosePerk(i);
-    return;
-  }
-  if (state !== 'play') { primaryAction(); return; }
-  if (inRect(LOCK_BTN, p.x, p.y)) { toggleLock(); return; }
+  for (const b of uiButtons) if (inRect(b, p.x, p.y)) { b.action(); return; }
+  if (state !== 'play') return;
   dragging = true;
   g.lane = clamp(Math.floor(p.x / 150), 0, 2);
 });
@@ -2538,5 +2707,9 @@ window.addEventListener('pointerup', () => { dragging = false; });
 window.addEventListener('pointercancel', () => { dragging = false; });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && state === 'play') state = 'paused';
+  if (document.hidden) {
+    if (state === 'play') openMenu();
+    else saveGame();
+  }
 });
+window.addEventListener('pagehide', saveGame);

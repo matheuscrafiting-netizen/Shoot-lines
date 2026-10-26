@@ -11,10 +11,10 @@ Ou abra o `index.html` em qualquer navegador (PC ou celular). Não precisa insta
 | Ação | Teclado | Toque / mouse |
 |---|---|---|
 | Trocar de faixa | `←` `→` ou `A` `D` | Toque ou arraste na faixa desejada |
-| Começar / reiniciar | `Enter` / `Espaço` | Toque na tela |
+| Começar / continuar | `Enter` / `Espaço` | Botões **JOGAR**, **CONTINUAR** ou **NOVO JOGO** |
+| Menu de pausa (status, evoluções, habilidades, ameaças) | `P` / `Esc` | Botão **☰** no canto superior esquerdo |
 | Travar / destravar a arma | `L` | Botão **🔓 Travar** no canto inferior direito |
 | Escolher evolução | `1` `2` `3` | Toque na carta |
-| Pausar | `P` / `Esc` | — |
 | Som on/off | `M` | — |
 
 ## Mecânicas
@@ -28,15 +28,22 @@ Ou abra o `index.html` em qualquer navegador (PC ou celular). Não precisa insta
 - **Armas** (em ordem): Pistola → Submetralhadora → Fuzil → Escopeta → Laser (perfura) → Lança-foguetes (dano em área) → Minigun.
 - **Dano e cadência sem limite**: os bônus (+20% dano, +15% cadência) somam para sempre. Acima de 20 tiros/s, a cadência extra vira dano.
 
+### Interface
+
+- Topo: **☰ menu**, pontos, nível e **⏱ tempo de jogo**.
+- O menu ☰ pausa o jogo e mostra patente (com progresso até a próxima), arma, multiplicadores, evoluções, habilidades da patente e ameaças — toque num ícone para ler o que ele faz. Dali dá para continuar, começar um novo jogo, ligar/desligar o som ou voltar ao menu inicial.
+- **A partida é salva sozinha** (a cada 5 s, ao pausar e ao sair do app). No menu inicial, **CONTINUAR** retoma de onde parou.
+- Números grandes usam a escala de jogo: 12.3K, 4.5M, 6.7B, 8.9T, depois **aa, ab, ac… zz**. A vida de baús e bosses aparece em **%**.
+
 ### Patentes
 
-Recruta → Soldado → Cabo → Sargento → Tenente → Capitão → Major → Coronel → General → General ★2, ★3…
+Recruta → Soldado → Cabo → Sargento → Tenente → Capitão → Major → Coronel → General, cada uma com os subníveis **I, II, III, IV e V** (depois de General V: General ★1, ★2…).
 
-- Ao chegar a **100 soldados**, o esquadrão sobe de patente sozinho: a quantidade é **dividida por 5**, mas cada soldado vale **5×** (mesma força, soldados maiores e com divisas). Assim os portões `+N` e `×2` continuam fazendo diferença a partida inteira.
-- O portão **⬆ Promover** sobe a patente na hora: divide por 4 e cada soldado vale 5× (**+25% de força**).
+- Ao chegar a **300 soldados**, o esquadrão sobe um subnível sozinho: a quantidade é **dividida por 3**, mas cada soldado vale **3×** (mesma força). Assim os portões `+N` e `×2` continuam fazendo diferença a partida inteira. Os soldados crescem e mudam de cor a cada patente.
+- O portão **⬆ Promover** sobe um subnível na hora: divide por 2,5 e cada soldado vale 3× (**+20% de força**).
 - O dano dos bichos é medido em "força", então a patente em si não deixa o esquadrão mais resistente — quem protege são as habilidades abaixo.
 
-Cada patente libera uma habilidade (elas acumulam):
+Cada patente (no subnível I) libera uma habilidade (elas acumulam):
 
 | Patente | Habilidade |
 |---|---|
@@ -48,6 +55,19 @@ Cada patente libera uma habilidade (elas acumulam):
 | Major | ⚕️ Médico: +5% de soldados a cada 8 s |
 | Coronel | ✈️ Ataque aéreo: bombardeia a tela toda a cada 15 s |
 | General | ⭐ Comando: habilidades 2× mais rápidas |
+
+### General: ameaças permanentes
+
+Ao chegar em **General I** surge a primeira **ameaça permanente**, e a partir daí cada boss derrotado traz mais uma (os bosses passam a vir a cada 45 s). Elas acumulam até o fim da partida:
+
+| Ameaça | Efeito |
+|---|---|
+| 👥 Horda | +25% de inimigos por onda |
+| 🪨 Couraça | Inimigos com +40% de vida |
+| 😡 Fúria | Inimigos causam +40% de dano |
+| 💨 Pressa | Inimigos 10% mais rápidos |
+| 👑 Elites | Mais inimigos com habilidades |
+| 💀 Senhor da guerra | Bosses com +50% de vida e mais agressivos |
 
 ### Arma travada e evoluções
 
@@ -66,7 +86,7 @@ Toque em **🔓 Travar** (ou `L`) para ficar com a arma atual. Com a arma travad
 | 🧭 Teleguiada | Balas fazem curva até os inimigos |
 | 🎖️ Recrutamento | Abates podem recrutar soldados |
 
-- **Dificuldade infinita, em rampa suave**: os bichos ficam mais fortes, mais rápidos e mais numerosos (besouros, corredores, cuspidores que trocam de faixa, brutamontes e tanques). A vida deles cresce num ritmo quase constante com o tempo e acompanha em parte o seu poder de fogo (você fica com ~40% de cada melhoria), sem paredões repentinos. Toda partida termina um dia — o desafio é ir o mais longe possível.
+- **Dificuldade infinita, em rampa suave**: os bichos ficam mais fortes, mais rápidos e mais numerosos (besouros, corredores, cuspidores que trocam de faixa, brutamontes e tanques). A vida e o dano deles crescem num ritmo suave com o tempo e acompanham o seu poder — no começo você fica com quase toda melhoria, e com o passar dos minutos o acompanhamento sobe (até 85% aos 9 min), então mesmo quem dispara na frente encontra desafio crescente, sem paredões repentinos. Toda partida termina um dia — o desafio é ir o mais longe possível.
 
 ### Habilidades dos inimigos
 
