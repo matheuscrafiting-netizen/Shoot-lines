@@ -66,7 +66,7 @@ Toque em **🔓 Travar** (ou `L`) para ficar com a arma atual. Com a arma travad
 | 🧭 Teleguiada | Balas fazem curva até os inimigos |
 | 🎖️ Recrutamento | Abates podem recrutar soldados |
 
-- **Dificuldade infinita**: os bichos ficam mais fortes, mais rápidos e mais numerosos (besouros, corredores, cuspidores que trocam de faixa, brutamontes e tanques). A força deles acelera com o tempo e acompanha em parte o tamanho do seu esquadrão, então toda partida termina um dia — o desafio é ir o mais longe possível.
+- **Dificuldade infinita, em rampa suave**: os bichos ficam mais fortes, mais rápidos e mais numerosos (besouros, corredores, cuspidores que trocam de faixa, brutamontes e tanques). A vida deles cresce num ritmo quase constante com o tempo e acompanha em parte o seu poder de fogo (você fica com ~40% de cada melhoria), sem paredões repentinos. Toda partida termina um dia — o desafio é ir o mais longe possível.
 
 ### Habilidades dos inimigos
 
@@ -80,7 +80,7 @@ Aparecem a partir do nível 2–5 e ficam mais comuns com o tempo:
 | 👑 Elite | Maior, 4× vida e 2× dano | Derrotar dá uma peça 🔧 |
 | 💚 Regenerador | Recupera vida se ficar 1 s sem levar dano | Fogo 🔥 impede a cura |
 | 🧬 Divisor | Ao morrer, vira dois menores | Dano em área |
-- **Boss** a cada 60 segundos. Ele marca em vermelho a faixa que vai atacar: siga-o para acertar e desvie dos ataques. A vida dele acompanha o seu poder de fogo (não morre na hora); com 66% e 33% de vida ele liga um **escudo** por 3 s e chama reforços, e no fim fica furioso (ataca mais rápido). Derrotar dá soldados e 2 peças 🔧. Cada boss tem um ataque diferente:
+- **Boss** a cada 60 segundos. Ele marca em vermelho a faixa que vai atacar: siga-o para acertar e desvie dos ataques. A vida dele fica entre ~8 e ~15 s do seu tiro direto no 1º boss e cresce a cada boss (nunca morre na hora, nunca fica impossível); com 66% e 33% de vida ele liga um **escudo** por 3 s e chama reforços, e no fim fica furioso (ataca mais rápido). Derrotar dá soldados e 2 peças 🔧. Cada boss tem um ataque diferente:
 
 | Boss | Ataque |
 |---|---|
@@ -92,6 +92,10 @@ Aparecem a partir do nível 2–5 e ficam mais comuns com o tempo:
 
   Depois do 5º boss o ciclo recomeça, com bosses mais fortes.
 
+## Visual
+
+Estilo cartoon inspirado em jogos mobile como Clash Royale: contorno escuro grosso em tudo, cores vivas, soldados "cabeçudos", arena de grama quadriculada com caminho de pedra, baús de recompensa, botões 3D, barra de peças no estilo "elixir" e cartas de evolução com moldura por raridade. Fonte [Lilita One](https://fonts.google.com/specimen/Lilita+One) (Google Fonts, licença OFL). Nenhuma arte ou marca da Supercell é usada.
+
 ## Publicação
 
 O workflow `.github/workflows/pages.yml` publica o jogo no GitHub Pages a cada push na branch padrão.
@@ -99,5 +103,5 @@ O workflow `.github/workflows/pages.yml` publica o jogo no GitHub Pages a cada p
 ## Estrutura
 
 - `index.html` — página e canvas
-- `game.js` — todo o jogo (Canvas 2D com câmera em perspectiva + WebAudio, sem dependências)
+- `game.js` — todo o jogo (Canvas 2D com câmera em perspectiva + WebAudio, sem dependências; soldados são pré-desenhados em sprites para ficar leve no celular)
 - `.github/workflows/pages.yml` — publicação automática no GitHub Pages
