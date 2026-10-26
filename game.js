@@ -125,6 +125,11 @@ for (let i = 0; i < FORM_MAX; i++) {
   FORMATION.push({ x: Math.cos(a) * r, y: Math.sin(a) * r * 0.7 });
 }
 
+// Versão publicada (o deploy acrescenta ?v=<commit> ao endereço do script)
+const VERSION = (() => {
+  try { return new URL(document.currentScript.src).searchParams.get('v') || 'local'; } catch (e) { return 'local'; }
+})();
+
 let best = 0;
 try { best = +localStorage.getItem('shootlines-best') || 0; } catch (e) { /* sem storage */ }
 
@@ -1738,6 +1743,7 @@ function draw() {
       '← → / A D  ou  toque na faixa  •  L trava',
     ], 'Toque ou ENTER para começar');
     if (best) text('Recorde: ' + fmt(best), W / 2, 720, 18, '#ffe066');
+    text('versão ' + VERSION, W / 2, 770, 12, '#868e96', 'center', 600);
   } else if (state === 'paused') {
     drawOverlay('PAUSADO', ['P / ESC para continuar', 'M para som on/off', 'L para travar a arma'], 'Toque para continuar');
   } else if (state === 'choose') {
