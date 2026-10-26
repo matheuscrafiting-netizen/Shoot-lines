@@ -32,7 +32,7 @@ const RANKS = [
   { name: 'Tenente',  color: '#fa5252', helmet: '#c92a2a' },
   { name: 'Capitão',  color: '#be4bdb', helmet: '#862e9c' },
   { name: 'Major',    color: '#20c997', helmet: '#087f5b' },
-  { name: 'Coronel',  color: '#495057', helmet: '#212529' },
+  { name: 'Coronel',  color: '#868e96', helmet: '#343a40' },
   { name: 'General',  color: '#f1f3f5', helmet: '#fab005' },
 ];
 
@@ -49,6 +49,29 @@ const PERKS = {
   homing:    { icon: '🧭', name: 'Teleguiada',        color: '#8ce99a', desc: l => `Balas perseguem inimigos (força ${l})` },
   recruit:   { icon: '🎖️', name: 'Recrutamento',      color: '#fcc419', desc: l => `${4 * l}% de chance de +1 soldado por abate` },
 };
+
+// Habilidades especiais dos inimigos (liberadas conforme o nível)
+const MODS = {
+  shield:   { icon: '🛡️', name: 'Escudo',      minD: 2.5 },
+  dash:     { icon: '💨', name: 'Investida',   minD: 3 },
+  ghost:    { icon: '👻', name: 'Fantasma',    minD: 3.5 },
+  elite:    { icon: '👑', name: 'Elite',       minD: 4 },
+  regen:    { icon: '💚', name: 'Regenerador', minD: 4.5 },
+  splitter: { icon: '🧬', name: 'Divisor',     minD: 5 },
+};
+
+// Habilidades do esquadrão, liberadas por patente (acumulam)
+const RANK_SKILLS = [
+  { tier: 1, key: 'training', icon: '💪', name: 'Treinamento',  desc: '+15% de dano' },
+  { tier: 2, key: 'shield',   icon: '🛡️', name: 'Escudo',       desc: 'Bloqueia 1 golpe a cada 12 s' },
+  { tier: 3, key: 'grenade',  icon: '💣', name: 'Granada',      desc: 'Granada no inimigo mais forte a cada 6 s' },
+  { tier: 4, key: 'vest',     icon: '🦺', name: 'Colete',       desc: '-20% de dano recebido' },
+  { tier: 5, key: 'turret',   icon: '🔫', name: 'Torreta',      desc: 'Atira nas outras faixas' },
+  { tier: 6, key: 'medic',    icon: '⚕️', name: 'Médico',       desc: '+5% de soldados a cada 8 s' },
+  { tier: 7, key: 'air',      icon: '✈️', name: 'Ataque aéreo', desc: 'Bombardeia a tela a cada 15 s' },
+  { tier: 8, key: 'command',  icon: '⭐', name: 'Comando',      desc: 'Habilidades 2× mais rápidas' },
+];
+const SKILL_CD = { shield: 12, grenade: 6, medic: 8, air: 15 };
 
 const ENEMY_TYPES = {
   bug:     { hp: 3,  spd: 0.85, dmg: 1, r: 14, color: '#69db7c', minD: 1 },
@@ -162,11 +185,12 @@ let g = null;
 
 function newGame() {
   g = {
-    t: 0, soldiers: 3, tier: 0, lane: 1, x: LANES[1],
+    t: 0, soldiers: 5, tier: 0, lane: 1, x: LANES[1],
     weapon: 0, rateMul: 1, dmgMul: 1, fireCd: 0,
-    locked: false, perks: {}, lastPerk: null, pendingEvo: 0, choice: null,
+    locked: false, perks: {}, lastPerk: null, pendingEvo: 0, choice: null, parts: 0,
+    skills: { shield: 0, grenade: 2, turret: 0, medic: 8, air: 5 }, shieldUp: false,
     bullets: [], enemies: [], gates: [], crates: [], projectiles: [],
-    particles: [], texts: [], zaps: [], rings: [],
+    particles: [], texts: [], zaps: [], rings: [], grenades: [], planes: [],
     score: 0, dist: 0, lastCritT: 0,
     spawnCd: 2, gateCd: 2.5, crateCd: 10, rows: 0, bossCd: BOSS_EVERY,
     boss: null, bossesKilled: 0, banner: null,
@@ -174,7 +198,7 @@ function newGame() {
   };
 }
 
-const diff = () => 1 + g.t / 35 + g.bossesKilled * 0.6;
+const diff = () => 1 + g.t / 35 + g.bossesKilled * 0.3;
 const worldSpeed = () => Math.min(90 + diff() * 7, 190);
 // Crescimento infinito dos inimigos: começa lento e acelera com o tempo,
 // então cedo ou tarde alcança qualquer esquadrão.
@@ -182,11 +206,13 @@ const growth = () => Math.exp(0.0077 * g.t + 0.00004 * g.t * g.t);
 const tierMul = () => Math.pow(TIER_POWER, g.tier);
 const power = () => g.soldiers * tierMul();
 // Os inimigos acompanham em parte a força do esquadrão: cada melhoria
-// ainda vale ~65% do ganho, e o tempo (growth) decide o fim.
-const enemyScale = () => growth() * Math.max(1, Math.pow(power() / 20, 0.35));
+// ainda vale ~metade do ganho, e o tempo (growth) decide o fim.
+const enemyScale = () => growth() * Math.max(1, Math.pow(power() / 20, 0.42));
 const perkLevels = () => Object.values(g.perks).reduce((a, b) => a + b, 0);
 const perk = k => g.perks[k] || 0;
 const rankSize = () => Math.min(1.9, 1 + 0.12 * g.tier);
+const skillCd = k => SKILL_CD[k] / (g.tier >= 8 ? 2 : 1);
+const isGhost = e => e.mod === 'ghost' && e.ghostT % 2.4 > 1.4;
 const shownSoldiers = () => Math.max(1, Math.min(g.soldiers, Math.floor(FORM_MAX / (rankSize() ** 2))));
 
 function rankInfo(tier) {
@@ -199,7 +225,8 @@ function fireStats() {
   const w = WEAPONS[g.weapon];
   const rate = w.rate * g.rateMul;
   const fireRate = Math.min(rate, MAX_FIRE_RATE);
-  const dmg = w.dmg * g.dmgMul * (1 + 0.1 * perkLevels()) * (rate / fireRate);
+  const training = g.tier >= 1 ? 1.15 : 1;
+  const dmg = w.dmg * g.dmgMul * training * (1 + 0.1 * perkLevels()) * (rate / fireRate);
   return { w, fireRate, dmg };
 }
 
@@ -233,10 +260,29 @@ function loseSoldiers(n, x) {
 
 // Dano em "força": soldados de patente alta aguentam mais.
 function losePower(p, x) {
+  if (g.tier >= 4) p *= 0.8;   // Colete
   const per = p / tierMul();
   const n = Math.floor(per) + (Math.random() < per % 1 ? 1 : 0);
   if (n > 0) loseSoldiers(n, x);
   else g.shake = Math.min(14, g.shake + 3);
+}
+
+// Escudo da patente Cabo: absorve um golpe inteiro
+function blockHit(x) {
+  if (!g.shieldUp) return false;
+  g.shieldUp = false;
+  g.skills.shield = skillCd('shield');
+  addText(x, PLAYER_Y - 80, '🛡️ Bloqueado!', '#74c0fc', 20);
+  burst(g.x, PLAYER_Y - 10, '#74c0fc', 24, 220);
+  sfx(600, 0.15, 'triangle', 0.07, -300);
+  return true;
+}
+
+// Golpe que tira uma fração do esquadrão (bosses)
+function loseFraction(f, min, x) {
+  if (blockHit(x)) return;
+  if (g.tier >= 4) f *= 0.8;
+  loseSoldiers(Math.max(min, Math.ceil(g.soldiers * f)), x);
 }
 
 function promote(divisor, x) {
@@ -247,6 +293,8 @@ function promote(divisor, x) {
   burst(x, PLAYER_Y - 10, '#ffd43b', 30, 240);
   g.flash = 0.25; g.flashColor = '#ffe066';
   sfx(440, 0.25, 'triangle', 0.08, 500);
+  const sk = RANK_SKILLS.find(k => k.tier === g.tier);
+  if (sk) g.banner = { text: 'Nova habilidade: ' + sk.icon + ' ' + sk.name, tip: sk.desc, life: 2.6, good: true };
 }
 
 function addSoldiers(n) {
@@ -269,18 +317,29 @@ function gameOver() {
 // ---------------------------------------------------------------------------
 // Geração de inimigos, portões, caixas e bosses
 // ---------------------------------------------------------------------------
-function spawnEnemy(typeKey, lane, y) {
+function pickMod(d) {
+  const avail = Object.keys(MODS).filter(k => MODS[k].minD <= d);
+  const chance = clamp((d - 2) * 0.06, 0, 0.5);
+  return avail.length && Math.random() < chance ? pick(avail) : null;
+}
+
+function spawnEnemy(typeKey, lane, y, mod = null, hpMul = 1) {
   const T = ENEMY_TYPES[typeKey];
   const d = diff();
-  const hp = Math.ceil(T.hp * (1 + (d - 1) * 0.45) * enemyScale());
-  g.enemies.push({
+  const elite = mod === 'elite';
+  const hp = Math.ceil(T.hp * (1 + (d - 1) * 0.45) * enemyScale() * hpMul * (elite ? 4 : 1));
+  const e = {
     id: g.nextId++, type: typeKey, lane, x: LANES[lane], tx: LANES[lane], y,
-    hp, maxHp: hp, r: T.r, color: T.color,
-    dmg: T.dmg * (1 + (d - 1) * 0.35) * enemyScale(),
+    hp, maxHp: hp, r: T.r * (elite ? 1.3 : 1), color: T.color,
+    dmg: T.dmg * (1 + (d - 1) * 0.2) * Math.pow(enemyScale(), 0.85) * (elite ? 2 : 1),
     spd: T.spd * worldSpeed() * rand(0.92, 1.08),
     switchCd: T.switcher ? rand(1.5, 3) : Infinity,
     wob: Math.random() * 6, hitT: 0, burn: 0, burnDps: 0, slow: 0, slowF: 1,
-  });
+    mod, shield: mod === 'shield' ? 3 + Math.floor(d / 2) : 0,
+    ghostT: rand(0, 2.4), lastHit: 0, dashing: false, child: false,
+  };
+  g.enemies.push(e);
+  return e;
 }
 
 function spawnWave() {
@@ -289,20 +348,20 @@ function spawnWave() {
   const lanesCount = Math.random() < Math.min(0.6, 0.15 + d * 0.08) ? 2 : 1;
   const lanes = shuffle([0, 1, 2]).slice(0, lanesCount);
   for (const lane of lanes) {
-    const n = rint(1, Math.min(6, 1 + Math.floor(d)));
+    const n = rint(1, Math.min(6, 1 + Math.floor(d * 0.7)));
     const type = pick(types);
-    for (let i = 0; i < n; i++) spawnEnemy(type, lane, -30 - i * (ENEMY_TYPES[type].r * 2 + 8));
+    for (let i = 0; i < n; i++) spawnEnemy(type, lane, -30 - i * (ENEMY_TYPES[type].r * 2 + 8), pickMod(d));
   }
 }
 
 function goodCell(d) {
   const r = Math.random();
-  if (r < 0.35) return { kind: 'add', v: rint(2, Math.min(40, 3 + Math.floor(d * 2))) };
-  if (r < 0.48) return { kind: 'mul', v: Math.random() < 0.75 ? 2 : 3 };
+  if (r < 0.38) return { kind: 'add', v: rint(2, Math.min(30, 3 + Math.floor(d * 1.5))) };
+  if (r < 0.48) return { kind: 'mul', v: Math.random() < 0.85 ? 2 : 3 };
   if (r < 0.63) return { kind: 'weapon' };
-  if (r < 0.73 && g.soldiers >= 8) return { kind: 'rank' };
-  if (r < 0.87) return { kind: 'rate', v: 25 };
-  return { kind: 'dmg', v: 30 };
+  if (r < 0.71 && g.soldiers >= 8) return { kind: 'rank' };
+  if (r < 0.86) return { kind: 'rate', v: 15 };
+  return { kind: 'dmg', v: 20 };
 }
 
 function badCell(d) {
@@ -337,19 +396,20 @@ function spawnCrate() {
   let reward;
   if (r < 0.45) reward = { kind: 'weapon' };
   else if (r < 0.75) reward = { kind: 'add', v: rint(4, Math.min(40, 6 + Math.floor(d * 3))) };
-  else reward = { kind: 'rate', v: 35 };
+  else reward = { kind: 'rate', v: 20 };
   g.crates.push({ lane: rint(0, 2), y: -40, hp, maxHp: hp, reward, hitT: 0 });
 }
 
 function spawnBoss() {
   const n = g.bossesKilled;
   const B = BOSSES[n % BOSSES.length];
-  const hp = Math.ceil(700 * B.hp * Math.pow(1.6, n) * enemyScale());
+  // pelo menos ~10 s (+2 s por boss) de tiro direto, mesmo com esquadrão enorme
+  const hp = Math.ceil(Math.max(700 * B.hp * Math.pow(1.6, n) * enemyScale(), dps() * (10 + 2 * n)));
   const lane = 1;
   g.boss = {
     kind: B.kind, name: B.name, color: B.color, lane, x: LANES[lane], tx: LANES[lane],
     y: -160, baseY: 150, mode: 'enter', hp, maxHp: hp, moveCd: 3, atkCd: 2.5, summonCd: 4,
-    tele: null, hitT: 0, t: 0, level: n + 1, burn: 0, burnDps: 0,
+    tele: null, hitT: 0, t: 0, level: n + 1, burn: 0, burnDps: 0, phases: [0.66, 0.33], shieldT: 0,
   };
   g.banner = { text: 'BOSS: ' + B.name, tip: B.tip, life: 2.8 };
   sfx(80, 0.8, 'sawtooth', 0.1, 120);
@@ -359,6 +419,17 @@ function spawnBoss() {
 // Arma: troca, trava e evoluções
 // ---------------------------------------------------------------------------
 const evolves = () => g.locked || g.weapon >= WEAPONS.length - 1;
+
+const partsNeed = () => evolves() ? 3 + Math.floor(perkLevels() / 2) : 2 + g.weapon;
+
+function gainParts(n, x) {
+  g.parts += n;
+  addText(x, PLAYER_Y - 70, `🔧 +${n} peça${n > 1 ? 's' : ''}`, '#ffe066', 20);
+  while (g.parts >= partsNeed()) {
+    g.parts -= partsNeed();
+    upgradeWeapon(x);
+  }
+}
 
 function upgradeWeapon(x) {
   if (evolves()) { grantEvo(x); return; }
@@ -417,7 +488,7 @@ function cellLabel(c) {
     case 'add': return (c.v >= 0 ? '+' : '') + c.v;
     case 'mul': return '×' + c.v;
     case 'div': return '÷' + c.v;
-    case 'weapon': return evolves() ? '⭐ Evolução' : WEAPONS[g.weapon + 1].name;
+    case 'weapon': return `🔧 Peça ${g.parts}/${partsNeed()}`;
     case 'rank': return '⬆ Promover';
     case 'rate': return (c.v > 0 ? '+' : '') + c.v + '% Cadência';
     case 'dmg': return (c.v > 0 ? '+' : '') + c.v + '% Dano';
@@ -450,7 +521,7 @@ function applyEffect(c, x) {
       loseSoldiers(g.soldiers - Math.ceil(g.soldiers / c.v), x);
       break;
     case 'weapon':
-      upgradeWeapon(x);
+      gainParts(1, x);
       break;
     case 'rank':
       // promoção pelo portão: ÷4 soldados, mas cada um vale 5× (ganho de 25%)
@@ -517,11 +588,21 @@ function fire() {
 }
 
 function damageEnemy(e, dmg, silent) {
+  if (isGhost(e)) return;
   e.hp -= dmg;
+  e.lastHit = g.t;
   if (!silent) e.hitT = 0.08;
   if (e.hp <= 0 && !e.dead) {
     e.dead = true;
     g.score += e.maxHp * 10;
+    if (e.mod === 'splitter') {
+      for (const off of [-14, 14]) {
+        const c = spawnEnemy(e.type, e.lane, e.y + off, null, 0.35);
+        c.r *= 0.7;
+        c.child = true;
+      }
+    }
+    if (e.mod === 'elite') gainParts(1, g.x);
     burst(e.x, e.y, e.color, 12, 180);
     if (!silent) sfx(220, 0.07, 'square', 0.03, -120);
     if (perk('recruit') && Math.random() < 0.04 * perk('recruit')) {
@@ -564,6 +645,15 @@ function rollCrit(dmg, x, y) {
 }
 
 function hitEnemy(b, e) {
+  if (e.shield > 0) {
+    // o escudo segura o tiro, mas não a explosão
+    e.shield--;
+    e.hitT = 0.05;
+    burst(e.x, e.y, '#74c0fc', 3, 120);
+    if (!e.shield) { burst(e.x, e.y, '#a5d8ff', 18, 220); sfx(900, 0.08, 'triangle', 0.04, -500); }
+    if (b.splash) splashAt(b.x, b.y, b.splash, b.dmg * b.splashMul);
+    return;
+  }
   const dmg = rollCrit(b.dmg, e.x, e.y);
   damageEnemy(e, dmg);
   if (perk('fire')) { e.burn = 2; e.burnDps = Math.max(e.burnDps, dmg * 0.6 * perk('fire')); }
@@ -642,9 +732,10 @@ function update(dt) {
     const base = Math.max(0.55, 2.2 - d * 0.22);
     g.spawnCd = g.boss ? base * 2.2 : base;
   }
+  // durante o boss os portões continuam, só que mais espaçados
+  g.gateCd -= dt;
+  if (g.gateCd <= 0) { spawnGateRow(); g.gateCd = g.boss ? rand(9, 12) : rand(5.5, 8); }
   if (!g.boss) {
-    g.gateCd -= dt;
-    if (g.gateCd <= 0) { spawnGateRow(); g.gateCd = rand(5.5, 8); }
     g.crateCd -= dt;
     if (g.crateCd <= 0) { spawnCrate(); g.crateCd = rand(9, 14); }
   }
@@ -709,7 +800,7 @@ function update(dt) {
 
     // Inimigos
     for (const e of g.enemies) {
-      if (e.dead || Math.abs(b.x - e.x) > e.r + b.size || Math.abs(b.y - e.y) > e.r + b.size) continue;
+      if (e.dead || isGhost(e) || Math.abs(b.x - e.x) > e.r + b.size || Math.abs(b.y - e.y) > e.r + b.size) continue;
       b.hit = b.hit || new Set();
       if (b.hit.has(e.id)) continue;
       b.hit.add(e.id);
@@ -724,6 +815,11 @@ function update(dt) {
     // Boss
     const bo = g.boss;
     if (bo && bo.y > 0 && Math.abs(b.x - bo.x) < 70 && Math.abs(b.y - bo.y) < 70) {
+      b.dead = true;
+      if (bo.shieldT > 0) {
+        if (Math.random() < 0.3) burst(b.x, b.y, '#74c0fc', 2, 120);
+        continue;
+      }
       const dmg = rollCrit(b.dmg, bo.x, bo.y);
       bo.hp -= dmg;
       bo.hitT = 0.06;
@@ -747,6 +843,12 @@ function update(dt) {
       if (e.dead) continue;
     }
     if (e.slow > 0) e.slow -= dt;
+    e.ghostT += dt;
+    if (e.mod === 'regen' && g.t - e.lastHit > 1 && e.burn <= 0) e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.12 * dt);
+    if (e.mod === 'dash' && !e.dashing && e.y > 300) {
+      e.dashing = true;
+      e.spd *= 2.6;
+    }
     const slowF = e.slow > 0 ? e.slowF : 1;
     e.y += e.spd * slowF * dt;
     e.wob += dt * 8 * slowF;
@@ -762,7 +864,14 @@ function update(dt) {
     if (e.y + e.r >= PLAYER_Y - 25 && Math.abs(e.x - g.x) < 60) {
       e.dead = true;
       burst(e.x, e.y, e.color, 14, 200);
-      losePower(e.dmg, g.x);
+      if (!blockHit(g.x)) losePower(e.dmg, g.x);
+      if (state !== 'play') return;
+    } else if (!e.escaped && e.y > PLAYER_Y + 30) {
+      // bicho que passa por outra faixa também custa soldados
+      e.escaped = true;
+      addText(e.x, PLAYER_Y + 20, 'Escapou!', '#ff8787', 15);
+      // começa leve (10% do dano) e chega a 35% em 5 minutos
+      losePower(e.dmg * (0.1 + 0.25 * Math.min(1, g.t / 300)), e.x);
       if (state !== 'play') return;
     }
   }
@@ -788,7 +897,9 @@ function update(dt) {
   g.crates = g.crates.filter(c => !c.dead && c.y < H + 40);
 
   // Boss
-  if (g.boss && g.boss.burn > 0) {
+  updateSkills(dt, myLane);
+  if (state !== 'play') return;
+  if (g.boss && g.boss.burn > 0 && g.boss.shieldT <= 0) {
     g.boss.burn -= dt;
     g.boss.hp -= g.boss.burnDps * dt;
   }
@@ -802,7 +913,7 @@ function update(dt) {
     if (!p.dead && p.y >= PLAYER_Y - 20 && p.y <= PLAYER_Y + 20 && Math.abs(p.x - g.x) < 60) {
       p.dead = true;
       burst(p.x, p.y, p.color, 20, 220);
-      loseSoldiers(Math.max(2, Math.ceil(g.soldiers * p.power)), g.x);
+      loseFraction(p.power, 2, g.x);
       if (state !== 'play') return;
     }
   }
@@ -820,11 +931,116 @@ function update(dt) {
   g.texts = g.texts.filter(t => t.life > 0);
   for (const z of g.zaps) z.life -= dt;
   g.zaps = g.zaps.filter(z => z.life > 0);
+  for (const p of g.planes) {
+    p.t += dt;
+    if (!p.hit && p.t > 0.55) { p.hit = true; applyAirStrike(); }
+  }
+  g.planes = g.planes.filter(p => p.t < 1.6);
   for (const r of g.rings) r.life -= dt;
   g.rings = g.rings.filter(r => r.life > 0);
   if (g.banner) { g.banner.life -= dt; if (g.banner.life <= 0) g.banner = null; }
 
   if (g.pendingEvo > 0) openChoice();
+}
+
+// ---------------------------------------------------------------------------
+// Habilidades de patente
+// ---------------------------------------------------------------------------
+function updateSkills(dt, myLane) {
+  const s = g.skills;
+  if (g.tier >= 2 && !g.shieldUp) {
+    s.shield -= dt;
+    if (s.shield <= 0) g.shieldUp = true;
+  }
+  if (g.tier >= 3) {
+    s.grenade -= dt;
+    if (s.grenade <= 0) s.grenade = throwGrenade(myLane) ? skillCd('grenade') : 0.5;
+  }
+  if (g.tier >= 5) {
+    s.turret -= dt;
+    if (s.turret <= 0) { s.turret = 0.4; turretShot(myLane); }
+  }
+  if (g.tier >= 6) {
+    s.medic -= dt;
+    if (s.medic <= 0) {
+      s.medic = skillCd('medic');
+      const n = Math.max(1, Math.round(g.soldiers * 0.05));
+      addText(g.x, PLAYER_Y - 80, '+' + n + ' ⚕️', '#8ce99a', 18);
+      addSoldiers(n);
+    }
+  }
+  if (g.tier >= 7) {
+    s.air -= dt;
+    if (s.air <= 0) { s.air = skillCd('air'); airStrike(); }
+  }
+  for (const gr of g.grenades) {
+    gr.t += dt;
+    if (gr.t >= gr.dur && !gr.done) {
+      gr.done = true;
+      splashAt(gr.x1, gr.y1, 85, gr.dmg);
+      g.rings.push({ x: gr.x1, y: gr.y1, r: 85, life: 0.4, max: 0.4 });
+      const bo = g.boss;
+      if (bo && bo.shieldT <= 0 && Math.hypot(bo.x - gr.x1, bo.y - gr.y1) < 110) bo.hp -= gr.dmg;
+      burst(gr.x1, gr.y1, '#ffd43b', 20, 260);
+      g.shake = Math.min(12, g.shake + 4);
+      sfx(100, 0.25, 'sawtooth', 0.08, -60);
+    }
+  }
+  g.grenades = g.grenades.filter(gr => !gr.done);
+}
+
+function throwGrenade(myLane) {
+  let tgt = null;
+  for (const e of g.enemies) {
+    if (e.dead || isGhost(e) || e.lane !== myLane || e.y < 40 || e.y > PLAYER_Y - 80) continue;
+    if (!tgt || e.hp > tgt.hp) tgt = e;
+  }
+  const bo = g.boss;
+  let x1, y1;
+  const dur = 0.6;
+  if (tgt) { x1 = tgt.x; y1 = tgt.y + tgt.spd * dur; }
+  else if (bo && bo.lane === myLane && bo.y > 0 && bo.shieldT <= 0) { x1 = bo.x; y1 = bo.y; }
+  else return false;
+  g.grenades.push({ x0: g.x, y0: PLAYER_Y - 20, x1, y1, t: 0, dur, dmg: dps() * 2 });
+  sfx(500, 0.1, 'triangle', 0.04, -200);
+  return true;
+}
+
+function turretShot(myLane) {
+  let tgt = null;
+  for (const e of g.enemies) {
+    if (e.dead || isGhost(e) || e.lane === myLane || e.y < 60 || e.y > PLAYER_Y) continue;
+    if (!tgt || e.y > tgt.y) tgt = e;
+  }
+  if (!tgt) return;
+  const sx = g.x, sy = PLAYER_Y - 20, spd = 900;
+  const dx = tgt.x - sx, dy = tgt.y + tgt.spd * 0.3 - sy, len = Math.hypot(dx, dy) || 1;
+  g.bullets.push({
+    x: sx, y: sy, vx: dx / len * spd, vy: dy / len * spd, speed: spd,
+    dmg: dps() * 0.3 * 0.4, color: '#ced4da', size: 3, pierce: 0, splash: 0, splashMul: 0,
+    bounce: 0, homing: 0, trail: true, hit: null,
+  });
+}
+
+function airStrike() {
+  g.planes.push({ t: 0, hit: false });
+  sfx(60, 1.2, 'sawtooth', 0.06, 40);
+}
+
+function applyAirStrike() {
+  const dmg = dps() * 1.5;
+  for (const e of g.enemies) {
+    if (e.dead || e.y < 0) continue;
+    g.rings.push({ x: e.x, y: e.y, r: 50, life: 0.35, max: 0.35 });
+    damageEnemy(e, dmg, true);
+  }
+  const bo = g.boss;
+  if (bo && bo.shieldT <= 0 && bo.y > 0) {
+    bo.hp -= dmg;
+    g.rings.push({ x: bo.x, y: bo.y, r: 90, life: 0.4, max: 0.4 });
+  }
+  g.shake = 14;
+  g.flash = 0.2; g.flashColor = '#ffa94d';
 }
 
 const SHOTS = {
@@ -886,6 +1102,18 @@ function updateBoss(dt, myLane) {
   if (!bo) return;
   bo.t += dt;
   bo.hitT = Math.max(0, bo.hitT - dt);
+  if (bo.shieldT > 0) bo.shieldT -= dt;
+  if (bo.phases.length && bo.hp / bo.maxHp < bo.phases[0]) {
+    // nova fase: escudo temporário e reforços
+    bo.phases.shift();
+    bo.shieldT = 3;
+    const d = diff();
+    const types = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].minD <= d);
+    const per = bo.level >= 3 ? 2 : 1;
+    for (const l of [0, 1, 2]) for (let i = 0; i < per; i++) spawnEnemy(pick(types), l, bo.y + 30 - i * 40, bo.level >= 2 ? pickMod(d) : null);
+    g.banner = { text: '🛡️ Escudo do boss!', tip: 'Elimine os reforços', life: 1.8 };
+    sfx(300, 0.4, 'triangle', 0.08, 300);
+  }
   bo.x += (bo.tx - bo.x) * Math.min(1, dt * 3);
   if (bo.mode !== 'enter') bo.baseY += 4 * dt;   // avança lentamente
 
@@ -900,7 +1128,7 @@ function updateBoss(dt, myLane) {
       burst(bo.x, bo.y + 60, bo.color, 24, 260);
       sfx(90, 0.3, 'sawtooth', 0.1, -40);
       if (myLane === bo.lane) {
-        loseSoldiers(Math.max(3, Math.ceil(g.soldiers * 0.4)), g.x);
+        loseFraction(0.4, 3, g.x);
         if (state !== 'play') return;
       }
     }
@@ -919,7 +1147,10 @@ function updateBoss(dt, myLane) {
       bo.tx = LANES[bo.lane];
     }
     bo.atkCd -= dt;
-    if (bo.atkCd <= 0) bossAttack(bo, myLane);
+    if (bo.atkCd <= 0) {
+      bossAttack(bo, myLane);
+      if (bo.hp / bo.maxHp < 0.33) bo.atkCd *= 0.7;   // fúria no fim da luta
+    }
   }
 
   if (bo.tele) {
@@ -955,16 +1186,17 @@ function updateBoss(dt, myLane) {
     g.shake = 18;
     g.flash = 0.4; g.flashColor = '#ffffff';
     g.score += 5000 * bo.level;
-    const bonus = 10 + 5 * bo.level;
+    const bonus = 5 + 2 * bo.level;
     addText(W / 2, 300, 'BOSS DERROTADO!', '#ffe066', 34);
     addText(W / 2, 340, '+' + bonus + ' soldados', '#8ce99a', 20);
     addSoldiers(bonus);
-    upgradeWeapon(g.x);
+    gainParts(2, g.x);
     g.bossesKilled++;
     g.boss = null;
     g.projectiles = [];
     g.bossCd = BOSS_EVERY;
     g.gateCd = 1.5;
+    g.spawnCd = 3;   // respiro depois do boss
     sfx(150, 0.9, 'sawtooth', 0.1, -120);
   }
 }
@@ -1126,6 +1358,15 @@ function drawSquad() {
     drawSoldier(rank, i === 0, Math.sin(g.t * 14 + i) * 1.3, g.tier);
     ctx.restore();
   }
+  if (g.shieldUp) {
+    const sp = proj(g.x, PLAYER_Y + 5);
+    ctx.globalAlpha = 0.5 + 0.15 * Math.sin(g.t * 6);
+    ctx.strokeStyle = '#74c0fc';
+    ctx.fillStyle = 'rgba(116, 192, 252, .12)';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(sp.x, sp.y - 20 * size, 62 * size, 52 * size, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   const lp = proj(g.x, PLAYER_Y - 45 * size);
   const label = fmt(g.soldiers);
   const bw = 22 + label.length * 11;
@@ -1144,6 +1385,26 @@ function drawEnemy(e) {
   const r = e.r;
   const wob = Math.sin(e.wob);
   const cy = -r - 4 - Math.abs(wob) * 3;
+  const ghost = isGhost(e);
+  if (e.mod === 'ghost') ctx.globalAlpha = ghost ? 0.25 : 0.85;
+  if (e.dashing) {
+    ctx.strokeStyle = 'rgba(255,255,255,.5)';
+    ctx.lineWidth = 2;
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * r * 0.6, cy - r - 4);
+      ctx.lineTo(i * r * 0.6, cy - r - 26 - Math.random() * 10);
+      ctx.stroke();
+    }
+  }
+  if (e.mod === 'elite') {
+    ctx.fillStyle = 'rgba(255, 212, 59, .3)';
+    circle(0, cy, r * 1.3);
+  }
+  if (e.mod === 'regen' && g.t - e.lastHit > 1 && e.hp < e.maxHp) {
+    ctx.fillStyle = 'rgba(105, 219, 124, .35)';
+    circle(0, cy, r * 1.25);
+  }
   ctx.fillStyle = 'rgba(0,0,0,.3)';
   ellipse(0, 0, r, r * 0.35);
   // patas
@@ -1200,6 +1461,27 @@ function drawEnemy(e) {
       ctx.fill();
     }
   }
+  if (e.mod === 'elite') {
+    ctx.fillStyle = '#fab005';
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.5, cy - r * 0.85); ctx.lineTo(-r * 0.4, cy - r * 1.3); ctx.lineTo(-r * 0.15, cy - r * 1.05);
+    ctx.lineTo(0, cy - r * 1.4); ctx.lineTo(r * 0.15, cy - r * 1.05); ctx.lineTo(r * 0.4, cy - r * 1.3);
+    ctx.lineTo(r * 0.5, cy - r * 0.85);
+    ctx.closePath(); ctx.fill();
+  }
+  if (e.shield > 0) {
+    ctx.fillStyle = 'rgba(116, 192, 252, .2)';
+    ctx.strokeStyle = '#74c0fc';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, cy, r * 1.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    text(String(e.shield), r * 1.25, cy - r * 1.1, 13, '#d0ebff');
+  }
+  if (e.mod && e.mod !== 'elite') {
+    ctx.font = `${Math.max(12, r * 0.8)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(MODS[e.mod].icon, -r * 1.15, cy - r * 1.05);
+  }
   if (e.hp < e.maxHp) {
     const bw = r * 2;
     ctx.fillStyle = 'rgba(0,0,0,.5)';
@@ -1207,6 +1489,7 @@ function drawEnemy(e) {
     ctx.fillStyle = '#ff6b6b';
     ctx.fillRect(-bw / 2, cy - r - 10, bw * Math.max(0, e.hp / e.maxHp), 4);
   }
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
@@ -1271,7 +1554,7 @@ function drawCrate(cr) {
   ctx.moveTo(-26, -50); ctx.lineTo(26, 0);
   ctx.moveTo(26, -50); ctx.lineTo(-26, 0);
   ctx.stroke();
-  const icon = cr.reward.kind === 'weapon' ? (evolves() ? '⭐' : '🔫') : cr.reward.kind === 'add' ? '👥' : '⚡';
+  const icon = cr.reward.kind === 'weapon' ? '🔧' : cr.reward.kind === 'add' ? '👥' : '⚡';
   ctx.font = '24px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -1454,6 +1737,14 @@ function drawBoss() {
   const flick = bo.hitT > 0 && Math.floor(bo.t * 30) % 4 === 0;
   const col = flick ? '#ffffff' : bo.color;
   BOSS_DRAW[bo.kind](bo, col, Math.sin(bo.t * 4) * 3, flick);
+  if (bo.shieldT > 0) {
+    ctx.globalAlpha = 0.6 + 0.3 * Math.sin(bo.t * 20);
+    ctx.fillStyle = 'rgba(116, 192, 252, .25)';
+    ctx.strokeStyle = '#74c0fc';
+    ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.ellipse(0, 0, 105, 95, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   ctx.restore();
 }
 
@@ -1536,6 +1827,39 @@ function drawBullets() {
   }
 }
 
+function drawGrenades() {
+  for (const gr of g.grenades) {
+    const k = gr.t / gr.dur;
+    const p = proj(gr.x0 + (gr.x1 - gr.x0) * k, gr.y0 + (gr.y1 - gr.y0) * k);
+    const hgt = Math.sin(k * Math.PI) * 120 + 16;
+    ctx.fillStyle = 'rgba(0,0,0,.3)';
+    ellipse(p.x, p.y, 6 * p.s, 2 * p.s);
+    ctx.fillStyle = '#2b8a3e';
+    circle(p.x, p.y - hgt * p.s, 7 * p.s);
+    ctx.fillStyle = '#ffd43b';
+    circle(p.x + 3 * p.s, p.y - (hgt + 5) * p.s, 2.5 * p.s);
+  }
+}
+
+function drawPlanes() {
+  for (const pl of g.planes) {
+    const y = H + 80 - pl.t * (H + 260) / 1.2;
+    for (const fx of [0.22, 0.5, 0.78]) {
+      const x = W * fx;
+      ctx.fillStyle = 'rgba(0,0,0,.25)';
+      ctx.beginPath(); ctx.ellipse(x + 30, y + 60, 26, 9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#495057';
+      ctx.beginPath();
+      ctx.moveTo(x, y - 30); ctx.lineTo(x + 6, y - 6); ctx.lineTo(x + 32, y + 6); ctx.lineTo(x + 6, y + 8);
+      ctx.lineTo(x + 4, y + 22); ctx.lineTo(x + 12, y + 28); ctx.lineTo(x - 12, y + 28); ctx.lineTo(x - 4, y + 22);
+      ctx.lineTo(x - 6, y + 8); ctx.lineTo(x - 32, y + 6); ctx.lineTo(x - 6, y - 6);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ffa94d';
+      circle(x, y + 30, 4 + Math.random() * 3);
+    }
+  }
+}
+
 function drawEffects() {
   for (const r of g.rings) {
     const p = proj(r.x, r.y);
@@ -1592,7 +1916,7 @@ function drawHUD() {
   const w = WEAPONS[g.weapon];
   ctx.fillStyle = 'rgba(0,0,0,.55)';
   ctx.fillRect(0, H - 50, W, 50);
-  fitText('🔫 ' + w.name + (g.locked ? ' 🔒' : ''), 12, H - 34, LOCK_BTN.x - 20, 15, bulletColor(w), 'left', 800);
+  fitText('🔫 ' + w.name + (g.locked ? ' 🔒' : '') + `   🔧 ${g.parts}/${partsNeed()}`, 12, H - 34, LOCK_BTN.x - 20, 15, bulletColor(w), 'left', 800);
   fitText(`Dano ×${fmtMul(g.dmgMul)}  •  Cadência ×${fmtMul(g.rateMul)}`, 12, H - 13, LOCK_BTN.x - 20, 13, '#dee2e6', 'left', 600);
   roundRect(LOCK_BTN.x, LOCK_BTN.y, LOCK_BTN.w, LOCK_BTN.h, 10);
   ctx.fillStyle = g.locked ? '#f59f00' : '#343a40';
@@ -1620,6 +1944,25 @@ function drawHUD() {
     px += 45;
   }
 
+  // habilidades de patente (canto direito)
+  let sx = W - 12 - 34;
+  for (const sk of RANK_SKILLS.filter(k => k.tier <= g.tier).reverse()) {
+    const cd = sk.key === 'shield' ? (g.shieldUp ? 0 : g.skills.shield / skillCd('shield'))
+      : SKILL_CD[sk.key] ? g.skills[sk.key] / skillCd(sk.key) : 0;
+    roundRect(sx, 114, 30, 26, 8);
+    ctx.fillStyle = 'rgba(0,0,0,.5)';
+    ctx.fill();
+    ctx.font = '15px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(sk.icon, sx + 15, 127);
+    if (cd > 0) {
+      ctx.fillStyle = 'rgba(0,0,0,.6)';
+      ctx.fillRect(sx, 114 + 26 * (1 - clamp(cd, 0, 1)), 30, 26 * clamp(cd, 0, 1));
+    }
+    sx -= 34;
+  }
+
   const bo = g.boss;
   if (bo) {
     roundRect(40, 58, W - 80, 20, 6);
@@ -1635,9 +1978,10 @@ function drawHUD() {
 
   if (g.banner) {
     ctx.globalAlpha = Math.min(1, g.banner.life * 2);
-    ctx.fillStyle = 'rgba(120, 0, 0, .75)';
+    ctx.fillStyle = g.banner.good ? 'rgba(0, 90, 40, .8)' : 'rgba(120, 0, 0, .75)';
     ctx.fillRect(0, H / 2 - 60, W, 120);
-    text('⚠ ' + g.banner.text + ' ⚠', W / 2, H / 2 - 14, 28, '#ffe3e3');
+    if (g.banner.good) fitText(g.banner.text, W / 2, H / 2 - 14, W - 30, 26, '#d3f9d8');
+    else fitText('⚠ ' + g.banner.text + ' ⚠', W / 2, H / 2 - 14, W - 30, 28, '#ffe3e3');
     if (g.banner.tip) text(g.banner.tip, W / 2, H / 2 + 26, 18, '#ffd8a8', 'center', 700);
     ctx.globalAlpha = 1;
   }
@@ -1701,6 +2045,7 @@ function draw() {
     for (const it of items) it[1]();
     drawProjectiles();
     drawBullets();
+    drawGrenades();
     drawEffects();
     for (const p of g.particles) {
       const q = proj(p.x, p.y);
@@ -1712,6 +2057,7 @@ function draw() {
   }
   drawFog();
   if (g) {
+    drawPlanes();
     for (const t of g.texts) {
       const q = proj(t.x, t.y);
       ctx.globalAlpha = Math.min(1, t.life / t.max * 2);
@@ -1735,9 +2081,9 @@ function draw() {
       'Seu esquadrão avança por 3 faixas.',
       'Portões VERDES: soldados, armas, dano.',
       'Evite os VERMELHOS e os bichos!',
-      'Atire nos portões "+" para aumentá-los.',
-      'Com 100 soldados eles sobem de patente:',
-      'ficam menos, maiores e bem mais fortes.',
+      'Bicho que escapa também tira soldados!',
+      'Com 100 soldados eles sobem de patente',
+      'e ganham habilidades novas.',
       '🔒 Trave a arma para ganhar evoluções.',
       '',
       '← → / A D  ou  toque na faixa  •  L trava',
