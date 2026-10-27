@@ -89,9 +89,9 @@ const GENERAL_RANK = 8;
 const ENEMY_TYPES = {
   bug:     { hp: 3,  spd: 0.85, dmg: 1, r: 14, color: '#69db7c', minD: 1 },
   runner:  { hp: 2,  spd: 1.6,  dmg: 1, r: 11, color: '#ffd43b', minD: 1.6 },
-  spitter: { hp: 6,  spd: 0.8,  dmg: 2, r: 16, color: '#da77f2', minD: 2.2, switcher: true },
-  brute:   { hp: 18, spd: 0.6,  dmg: 4, r: 22, color: '#ff922b', minD: 2.8 },
-  tank:    { hp: 45, spd: 0.45, dmg: 8, r: 28, color: '#868e96', minD: 4 },
+  spitter: { hp: 5,  spd: 0.8,  dmg: 1.5, r: 16, color: '#da77f2', minD: 2.2, switcher: true },
+  brute:   { hp: 10, spd: 0.6,  dmg: 2, r: 22, color: '#ff922b', minD: 2.8 },
+  tank:    { hp: 20, spd: 0.45, dmg: 3, r: 28, color: '#868e96', minD: 4 },
 };
 
 const BOSSES = [
@@ -206,9 +206,9 @@ function sfx(freq, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
 // ---------------------------------------------------------------------------
 // Modos de dificuldade: multiplicam a força dos inimigos e o ritmo de crescimento
 const MODES = [
-  { name: 'Fácil',   mult: 0.6, growth: 0.75, color: '#51cf66', dark: '#2b8a3e' },
+  { name: 'Fácil',   mult: 0.5, growth: 0.75, color: '#51cf66', dark: '#2b8a3e' },
   { name: 'Normal',  mult: 1,   growth: 1,    color: '#ffd43b', dark: '#e8a200' },
-  { name: 'Difícil', mult: 1.5, growth: 1.25, color: '#ff6b6b', dark: '#c92a2a' },
+  { name: 'Difícil', mult: 1.6, growth: 1.2, color: '#ff6b6b', dark: '#c92a2a' },
 ];
 let modePref = 1;
 try { modePref = clamp(+(localStorage.getItem('shootlines-mode') ?? 1) || 0, 0, 2); } catch (e) { /* sem storage */ }
@@ -232,27 +232,59 @@ function newGame() {
   };
 }
 
-const diff = () => 1 + g.t / 35 + g.bossesKilled * 0.3;
+const diff = () => 1 + g.t / 35;
 const worldSpeed = () => Math.min(90 + diff() * 7, 190);
-// Crescimento infinito dos inimigos em rampa suave (~+45% por minuto no
-// começo, acelerando devagar), sem paredões repentinos.
-const growth = () => Math.exp(mode().growth * (0.005 * g.t + 0.000008 * g.t * g.t));
 const tierMul = () => Math.pow(TIER_POWER, g.tier);
 const rankOf = step => Math.floor(step / SUBLEVELS);      // 0 = Recruta ... 8 = General
 const rank = () => rankOf(g.tier);
 const threat = k => g.threats[k] || 0;
 const threatCount = () => Object.values(g.threats).reduce((a, b) => a + b, 0);
 const power = () => g.soldiers * tierMul();
-// Os inimigos acompanham em parte o poder de fogo do esquadrão (vida) e a
-// força dele (dano): cada melhoria ainda vale ~40% do ganho, e o tempo
-// (growth) decide o fim.
-const DPS_REF = 12;   // poder de fogo inicial
-// o acompanhamento entra aos poucos nos primeiros 4 minutos (até 60%) e
-// continua subindo até 85% aos 9 min: quem dispara na frente não foge para sempre.
-// Vida e dano usam o mesmo ritmo, para não surgir um paredão de dano.
-const trackExp = () => 0.6 * Math.min(1, g.t / 240) + 0.25 * clamp((g.t - 240) / 300, 0, 1);
-const enemyScale = () => mode().mult * growth() * Math.pow(1.4, threat('armor')) * Math.max(1, Math.pow(dps() / DPS_REF, trackExp()));
-const enemyDmgScale = () => mode().mult * growth() * Math.pow(1.4, threat('fury')) * Math.max(1, Math.pow(power() / 20, Math.max(0.8, trackExp())));
+// ---------------------------------------------------------------------------
+// Dificuldade: depende SÓ do tempo (e do modo), igual em toda partida.
+// A referência é o crescimento medido de um esquadrão "médio" (logaritmo do
+// poder de fogo e da força a cada minuto), com folga. Quem fica acima da
+// referência acha mais fácil; quem fica abaixo sente mais pressão.
+// ---------------------------------------------------------------------------
+const DPS_REF = 12;                                  // poder de fogo inicial
+const BUG_HP = 3;
+const REF_LN_DPS = [2.5, 5.6, 8.5, 10.5, 11.5, 13.3, 14.9, 16.0, 17.8, 19.8, 22.1,
+  24.2, 26.0, 27.9, 30.3, 32.5, 33.9, 35.4, 38.7, 42.2, 43.8];   // por minuto, 0..20
+const REF_LN_POW = [1.6, 4.0, 5.3, 6.6, 7.5, 8.6, 9.8, 10.9, 11.9, 13.9, 15.7,
+  17.6, 19.3, 20.8, 23.2, 25.2, 26.4, 28.2, 31.3, 33.9, 35.3];
+function refCurve(table, slope) {
+  const m = g.t / 60;
+  const last = table.length - 1;
+  const v = m >= last ? table[last] + slope * (g.t - last * 60)
+    : table[Math.floor(m)] + (table[Math.floor(m) + 1] - table[Math.floor(m)]) * (m % 1);
+  // folga para o jogador médio; a partir dos 12 min a curva vai acelerando aos
+  // poucos, para que mesmo quem dispara na frente encontre o fim (~25-30 min)
+  const over = Math.max(0, g.t - 720);
+  return v - 0.7 * Math.min(1, g.t / 120) + 0.00004 * over * over;
+}
+const refDps = () => Math.exp(refCurve(REF_LN_DPS, 0.04));
+const refPower = () => Math.exp(refCurve(REF_LN_POW, 0.037));
+const gameT = () => g.t * mode().growth;             // tempo "de dificuldade"
+const lateCurve = tt => 1 + (tt / 900) * (tt / 900); // aperta devagar depois de 15 min
+// Carga: segundos de tiro concentrado, por segundo de jogo, que o esquadrão de
+// referência precisa para dar conta de todos os bichos: 0,25 no início, ~0,37
+// aos 5 min, ~0,5 aos 10 e sobe aos poucos depois
+const loadTarget = () => { const tt = gameT(); return 0.25 * (1 + tt / 600) * lateCurve(tt); };
+// "besouros-equivalentes" de vida que chegam por segundo com as ondas atuais
+function hpPerSec() {
+  const d = diff();
+  const types = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].minD <= d);
+  const typeAvg = types.reduce((a, k) => a + ENEMY_TYPES[k].hp, 0) / types.length / BUG_HP;
+  const lanes = 1 + Math.min(0.6, 0.15 + d * 0.08);
+  const perLane = (1 + Math.min(6, 1 + Math.floor(d * 0.7))) / 2 * (1 + 0.25 * threat('horde'));
+  const every = Math.max(0.55, 2.2 - d * 0.22);
+  return lanes * perLane * typeAvg / every;
+}
+const enemyScale = () => mode().mult * Math.pow(1.4, threat('armor')) * loadTarget() * refDps() / (hpPerSec() * BUG_HP);
+// dano de contato de um besouro: 6% da força de referência no início, ~9% aos
+// 5 min, ~17% aos 10 (para quem é mais forte que a referência, pesa menos)
+const contactFrac = () => { const tt = gameT(); return 0.06 * (1 + tt / 600) * lateCurve(tt); };
+const enemyDmgScale = () => mode().mult * Math.pow(1.4, threat('fury')) * contactFrac() * refPower();
 const perkLevels = () => Object.values(g.perks).reduce((a, b) => a + b, 0);
 const perk = k => g.perks[k] || 0;
 const rankSize = () => Math.min(1.9, 1 + 0.1 * rank() + 0.02 * (g.tier % SUBLEVELS));
@@ -409,11 +441,11 @@ function spawnEnemy(typeKey, lane, y, mod = null, hpMul = 1) {
   const T = ENEMY_TYPES[typeKey];
   const d = diff();
   const elite = mod === 'elite';
-  const hp = Math.ceil(T.hp * (1 + (d - 1) * 0.45) * enemyScale() * hpMul * (elite ? 4 : 1));
+  const hp = Math.ceil(T.hp * enemyScale() * hpMul * (elite ? 4 : 1));
   const e = {
     id: g.nextId++, type: typeKey, lane, x: LANES[lane], tx: LANES[lane], y,
     hp, maxHp: hp, r: T.r * (elite ? 1.3 : 1), color: T.color,
-    dmg: T.dmg * (1 + (d - 1) * 0.2) * enemyDmgScale() * (elite ? 2 : 1),
+    dmg: T.dmg * enemyDmgScale() * (elite ? 2 : 1),
     spd: T.spd * worldSpeed() * Math.min(2, Math.pow(1.1, threat('haste'))) * rand(0.92, 1.08),
     switchCd: T.switcher ? rand(1.5, 3) : Infinity,
     wob: Math.random() * 6, hitT: 0, burn: 0, burnDps: 0, slow: 0, slowF: 1,
@@ -475,7 +507,7 @@ function spawnGateRow() {
 function spawnCrate() {
   const d = diff();
   // a vida da caixa acompanha o poder de fogo: ~1,5 s de tiro concentrado
-  const hp = Math.ceil(Math.max(25 * Math.pow(d, 1.6), dps() * rand(1.2, 1.9)));
+  const hp = Math.ceil(refDps() * rand(1.2, 1.9));
   const r = Math.random();
   let reward;
   if (r < 0.45) reward = { kind: 'weapon' };
@@ -490,7 +522,8 @@ function spawnBoss() {
   // pelo menos ~10 s (+2 s por boss) de tiro direto, mesmo com esquadrão enorme
   // entre ~8 s e ~15 s de tiro direto no 1º boss, crescendo a cada boss:
   // nunca morre na hora e nunca fica impossível
-  const hp = Math.ceil(clamp(700 * B.hp * Math.pow(1.6, n) * enemyScale(), dps() * (8 + 3 * n), dps() * (15 + 4 * n)) * Math.pow(1.5, threat('warlord')));
+  // ~10 s do tiro do esquadrão de referência no 1º boss, +1,5 s por boss (até 30 s)
+  const hp = Math.ceil(refDps() * Math.min(30, 10 + 1.5 * n) * B.hp * mode().mult * Math.pow(1.5, threat('warlord')));
   const lane = 1;
   g.boss = {
     kind: B.kind, name: B.name, color: B.color, lane, x: LANES[lane], tx: LANES[lane],
@@ -1178,7 +1211,7 @@ function bossFire(bo) {
   for (const l of bo.tele.lanes) {
     g.projectiles.push({
       kind: bo.tele.shot, x: LANES[l], y: bo.y + 50, vy: S.spd + bo.level * 25, r: S.r, rot: 0,
-      color: S.color, power: S.power, hp: S.hp ? Math.ceil(Math.max(20, dps() * 0.12)) : 0,
+      color: S.color, power: S.power, hp: S.hp ? Math.ceil(refDps() * 0.12) : 0,
     });
   }
   sfx(300, 0.15, 'sawtooth', 0.06, -200);

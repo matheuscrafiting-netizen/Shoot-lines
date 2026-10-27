@@ -87,7 +87,7 @@ Toque em **🔓 Travar** (ou `L`) para ficar com a arma atual. Com a arma travad
 | 🧭 Teleguiada | Balas fazem curva até os inimigos |
 | 🎖️ Recrutamento | Abates podem recrutar soldados |
 
-- **Dificuldade infinita, em rampa suave**: os bichos ficam mais fortes, mais rápidos e mais numerosos (besouros, corredores, cuspidores que trocam de faixa, brutamontes e tanques). A vida e o dano deles crescem num ritmo suave com o tempo e acompanham o seu poder — no começo você fica com quase toda melhoria, e com o passar dos minutos o acompanhamento sobe (até 85% aos 9 min), então mesmo quem dispara na frente encontra desafio crescente, sem paredões repentinos. Toda partida termina um dia — o desafio é ir o mais longe possível. No **Fácil** os inimigos têm 60% da força e crescem mais devagar; no **Difícil**, 150% e crescem mais rápido.
+- **Dificuldade igual em toda partida**: a força dos bichos depende só do tempo de jogo (e do modo escolhido), seguindo uma curva fixa calibrada no crescimento de um esquadrão médio — com folga, para quem joga na média conseguir avançar. Quem fica mais forte que a média acha o jogo mais fácil; quem fica para trás sente mais pressão. A partir dos 12 minutos a curva vai acelerando aos poucos, então toda partida termina um dia (nas simulações, no Normal metade das partidas passa dos ~19 min e as melhores chegam perto dos 30). No **Fácil** os bichos têm metade da força e crescem mais devagar; no **Difícil**, 60% a mais e crescem mais rápido.
 
 ### Habilidades dos inimigos
 
@@ -101,7 +101,7 @@ Aparecem a partir do nível 2–5 e ficam mais comuns com o tempo:
 | 👑 Elite | Maior, 4× vida e 2× dano | Derrotar dá uma peça 🔧 |
 | 💚 Regenerador | Recupera vida se ficar 1 s sem levar dano | Fogo 🔥 impede a cura |
 | 🧬 Divisor | Ao morrer, vira dois menores | Dano em área |
-- **Boss** a cada 60 segundos. Ele marca em vermelho a faixa que vai atacar: siga-o para acertar e desvie dos ataques. A vida dele fica entre ~8 e ~15 s do seu tiro direto no 1º boss e cresce a cada boss (nunca morre na hora, nunca fica impossível); com 66% e 33% de vida ele liga um **escudo** por 3 s e chama reforços, e no fim fica furioso (ataca mais rápido). Derrotar dá soldados e 2 peças 🔧. Cada boss tem um ataque diferente:
+- **Boss** a cada 60 segundos. Ele marca em vermelho a faixa que vai atacar: siga-o para acertar e desvie dos ataques. A vida dele equivale a ~10 s de tiro de um esquadrão médio no 1º boss, +1,5 s a cada boss; com 66% e 33% de vida ele liga um **escudo** por 3 s e chama reforços, e no fim fica furioso (ataca mais rápido). Derrotar dá soldados e 2 peças 🔧. Cada boss tem um ataque diferente:
 
 | Boss | Ataque |
 |---|---|
