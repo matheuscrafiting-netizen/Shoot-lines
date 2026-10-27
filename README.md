@@ -12,6 +12,7 @@ Ou abra o `index.html` em qualquer navegador (PC ou celular). Não precisa insta
 |---|---|---|
 | Trocar de faixa | `←` `→` ou `A` `D` | Toque ou arraste na faixa desejada |
 | Começar / continuar | `Enter` / `Espaço` | Botões **JOGAR**, **CONTINUAR** ou **NOVO JOGO** |
+| Dificuldade (Fácil / Normal / Difícil) | — | Botões no menu inicial (vale para o próximo jogo) |
 | Menu de pausa (status, evoluções, habilidades, ameaças) | `P` / `Esc` | Botão **☰** no canto superior esquerdo |
 | Travar / destravar a arma | `L` | Botão **🔓 Travar** no canto inferior direito |
 | Escolher evolução | `1` `2` `3` | Toque na carta |
@@ -21,8 +22,8 @@ Ou abra o `index.html` em qualquer navegador (PC ou celular). Não precisa insta
 
 - **Portões verdes** (bônus): `+N` soldados, `×2` / `×3` soldados, arma melhor (ou ⭐ Evolução), ⬆ Promover, `+% Dano`, `+% Cadência`.
 - **Portões vermelhos** (penalidade): `-N` soldados, `÷2` soldados, `-% Dano`, `-% Cadência`.
-- **Atire nos portões `+N` / `-N`** para aumentar o valor — dá até para transformar um vermelho em verde.
-- **Caixas**: destrua atirando para ganhar arma nova, soldados ou cadência.
+- **Atire nos portões `+N` / `-N`** para aumentar o valor — dá até para transformar um vermelho em verde. As balas **atravessam** o portão (cada uma conta uma vez) e seguem até os bichos atrás dele.
+- **Baús**: destrua atirando para ganhar peças, soldados ou cadência (as balas também atravessam).
 - **Bichos**: se encostarem no esquadrão, matam soldados. Os que **escapam** por qualquer faixa também tiram soldados (pouco no começo, mais com o tempo) — troque de faixa para limpar todas.
 - **Peças 🔧**: portões de arma, caixas, bosses e inimigos Elite dão peças. A próxima arma custa 2, 3, 4… peças; com a arma travada, cada evolução custa 3 ou mais.
 - **Armas** (em ordem): Pistola → Submetralhadora → Fuzil → Escopeta → Laser (perfura) → Lança-foguetes (dano em área) → Minigun.
@@ -86,7 +87,7 @@ Toque em **🔓 Travar** (ou `L`) para ficar com a arma atual. Com a arma travad
 | 🧭 Teleguiada | Balas fazem curva até os inimigos |
 | 🎖️ Recrutamento | Abates podem recrutar soldados |
 
-- **Dificuldade infinita, em rampa suave**: os bichos ficam mais fortes, mais rápidos e mais numerosos (besouros, corredores, cuspidores que trocam de faixa, brutamontes e tanques). A vida e o dano deles crescem num ritmo suave com o tempo e acompanham o seu poder — no começo você fica com quase toda melhoria, e com o passar dos minutos o acompanhamento sobe (até 85% aos 9 min), então mesmo quem dispara na frente encontra desafio crescente, sem paredões repentinos. Toda partida termina um dia — o desafio é ir o mais longe possível.
+- **Dificuldade infinita, em rampa suave**: os bichos ficam mais fortes, mais rápidos e mais numerosos (besouros, corredores, cuspidores que trocam de faixa, brutamontes e tanques). A vida e o dano deles crescem num ritmo suave com o tempo e acompanham o seu poder — no começo você fica com quase toda melhoria, e com o passar dos minutos o acompanhamento sobe (até 85% aos 9 min), então mesmo quem dispara na frente encontra desafio crescente, sem paredões repentinos. Toda partida termina um dia — o desafio é ir o mais longe possível. No **Fácil** os inimigos têm 60% da força e crescem mais devagar; no **Difícil**, 150% e crescem mais rápido.
 
 ### Habilidades dos inimigos
 

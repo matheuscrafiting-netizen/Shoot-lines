@@ -204,12 +204,22 @@ function sfx(freq, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
 // ---------------------------------------------------------------------------
 // Estado do jogo
 // ---------------------------------------------------------------------------
+// Modos de dificuldade: multiplicam a força dos inimigos e o ritmo de crescimento
+const MODES = [
+  { name: 'Fácil',   mult: 0.6, growth: 0.75, color: '#51cf66', dark: '#2b8a3e' },
+  { name: 'Normal',  mult: 1,   growth: 1,    color: '#ffd43b', dark: '#e8a200' },
+  { name: 'Difícil', mult: 1.5, growth: 1.25, color: '#ff6b6b', dark: '#c92a2a' },
+];
+let modePref = 1;
+try { modePref = clamp(+(localStorage.getItem('shootlines-mode') ?? 1) || 0, 0, 2); } catch (e) { /* sem storage */ }
+const mode = () => MODES[g && g.mode != null ? g.mode : modePref];
+
 let state = 'menu';   // menu | play | paused | choose | over
 let g = null;
 
 function newGame() {
   g = {
-    t: 0, soldiers: 5, tier: 0, lane: 1, x: LANES[1],
+    t: 0, soldiers: 5, tier: 0, mode: modePref, lane: 1, x: LANES[1],
     weapon: 0, rateMul: 1, dmgMul: 1, fireCd: 0,
     locked: false, perks: {}, lastPerk: null, pendingEvo: 0, choice: null, parts: 0, threats: {}, saveT: 0,
     skills: { shield: 0, grenade: 2, turret: 0, medic: 8, air: 5 }, shieldUp: false,
@@ -226,7 +236,7 @@ const diff = () => 1 + g.t / 35 + g.bossesKilled * 0.3;
 const worldSpeed = () => Math.min(90 + diff() * 7, 190);
 // Crescimento infinito dos inimigos em rampa suave (~+45% por minuto no
 // começo, acelerando devagar), sem paredões repentinos.
-const growth = () => Math.exp(0.008 * g.t + 0.000008 * g.t * g.t);
+const growth = () => Math.exp(mode().growth * (0.005 * g.t + 0.000008 * g.t * g.t));
 const tierMul = () => Math.pow(TIER_POWER, g.tier);
 const rankOf = step => Math.floor(step / SUBLEVELS);      // 0 = Recruta ... 8 = General
 const rank = () => rankOf(g.tier);
@@ -241,8 +251,8 @@ const DPS_REF = 12;   // poder de fogo inicial
 // continua subindo até 85% aos 9 min: quem dispara na frente não foge para sempre.
 // Vida e dano usam o mesmo ritmo, para não surgir um paredão de dano.
 const trackExp = () => 0.6 * Math.min(1, g.t / 240) + 0.25 * clamp((g.t - 240) / 300, 0, 1);
-const enemyScale = () => growth() * Math.pow(1.4, threat('armor')) * Math.max(1, Math.pow(dps() / DPS_REF, trackExp()));
-const enemyDmgScale = () => growth() * Math.pow(1.4, threat('fury')) * Math.max(1, Math.pow(power() / 20, Math.max(0.8, trackExp())));
+const enemyScale = () => mode().mult * growth() * Math.pow(1.4, threat('armor')) * Math.max(1, Math.pow(dps() / DPS_REF, trackExp()));
+const enemyDmgScale = () => mode().mult * growth() * Math.pow(1.4, threat('fury')) * Math.max(1, Math.pow(power() / 20, Math.max(0.8, trackExp())));
 const perkLevels = () => Object.values(g.perks).reduce((a, b) => a + b, 0);
 const perk = k => g.perks[k] || 0;
 const rankSize = () => Math.min(1.9, 1 + 0.1 * rank() + 0.02 * (g.tier % SUBLEVELS));
@@ -352,7 +362,7 @@ function addSoldiers(n) {
 // Salvar e continuar
 // ---------------------------------------------------------------------------
 const SAVE_KEY = 'shootlines-save';
-const SAVE_FIELDS = ['t', 'soldiers', 'tier', 'weapon', 'rateMul', 'dmgMul', 'locked', 'perks', 'lastPerk',
+const SAVE_FIELDS = ['mode', 't', 'soldiers', 'tier', 'weapon', 'rateMul', 'dmgMul', 'locked', 'perks', 'lastPerk',
   'pendingEvo', 'parts', 'skills', 'shieldUp', 'score', 'dist', 'rows', 'bossCd', 'bossesKilled', 'threats', 'lane'];
 
 function saveGame() {
@@ -415,6 +425,8 @@ function spawnEnemy(typeKey, lane, y, mod = null, hpMul = 1) {
 }
 
 function spawnWave() {
+  // espera o portão que acabou de aparecer se afastar
+  if (g.gates.some(r => r.y < 80)) { g.spawnCd = 0.4; return; }
   const d = diff();
   const types = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].minD <= d);
   const lanesCount = Math.random() < Math.min(0.6, 0.15 + d * 0.08) ? 2 : 1;
@@ -453,11 +465,11 @@ function spawnGateRow() {
   cells.forEach((c, i) => {
     c.lane = i;
     c.prog = 0;
-    c.need = 4;      // tiros para +1 (cresce a cada aumento)
+    c.need = 5;      // tiros para +1 (cresce a cada aumento)
     c.pulse = 0;
   });
   g.gates.push({ y: -40, h: 52, cells, used: -1 });
-  g.spawnCd = Math.max(g.spawnCd, 1.6);
+  g.spawnCd = Math.max(g.spawnCd, 1.8);
 }
 
 function spawnCrate() {
@@ -828,11 +840,13 @@ function update(dt) {
   for (const b of g.bullets) {
     if (b.dead) continue;
 
-    // Portões de soma absorvem tiros e aumentam de valor
+    // Portões de soma: cada bala conta uma vez para aumentar o valor e segue
+    // em frente (não bloqueia os tiros nos bichos que estão atrás)
     for (const row of g.gates) {
-      if (row.used >= 0 || Math.abs(b.y - row.y) > row.h / 2) continue;
+      if (row.used >= 0 || b.lastGate === row || Math.abs(b.y - row.y) > row.h / 2) continue;
       const c = row.cells[nearestLane(b.x)];
       if (c.kind !== 'add' || Math.abs(b.x - LANES[c.lane]) > LANE_HALF) continue;
+      b.lastGate = row;
       c.prog++;
       if (c.prog >= c.need) {
         c.prog = 0;
@@ -840,25 +854,20 @@ function update(dt) {
         c.need *= 1.12;
         c.pulse = 0.15;
       }
-      b.dead = true;
-      break;
     }
-    if (b.dead) continue;
 
-    // Caixas
+    // Baús: levam o dano e a bala continua
     for (const cr of g.crates) {
-      if (cr.dead || Math.abs(b.x - LANES[cr.lane]) > 30 || Math.abs(b.y - cr.y) > 28) continue;
+      if (cr.dead || b.lastCrate === cr || Math.abs(b.x - LANES[cr.lane]) > 30 || Math.abs(b.y - cr.y) > 28) continue;
+      b.lastCrate = cr;
       cr.hp -= b.dmg;
       cr.hitT = 0.08;
-      b.dead = true;
       if (cr.hp <= 0) {
         cr.dead = true;
         burst(LANES[cr.lane], cr.y, '#c49a6c', 20, 220);
         applyEffect(cr.reward, g.x);
       }
-      break;
     }
-    if (b.dead) continue;
 
     // Pedras do Golem podem ser destruídas
     for (const p of g.projectiles) {
@@ -2443,13 +2452,24 @@ function drawMenu() {
   const save = loadSave();
   if (save) {
     pulseButton(W / 2, 572, 250, 58, '#51cf66', '#2b8a3e', 'CONTINUAR', 26, continueGame);
-    fitText(`${rankInfo(save.tier).name}  •  ⏱ ${fmtTime(save.t)}  •  ${fmt(save.soldiers)} soldados`, W / 2, 618, W - 60, 14, '#d3f9d8');
-    uiButton(W / 2 - 110, 642, 220, 50, '#ffd43b', '#e8a200', 'NOVO JOGO', 22, start);
+    fitText(`${MODES[save.mode ?? 1].name}  •  ${rankInfo(save.tier).name}  •  ⏱ ${fmtTime(save.t)}`, W / 2, 618, W - 60, 14, '#d3f9d8');
+    uiButton(W / 2 - 110, 638, 220, 46, '#ffd43b', '#e8a200', 'NOVO JOGO', 21, start);
   } else {
-    pulseButton(W / 2, 600, 220, 64, '#ffd43b', '#e8a200', 'JOGAR', 32, start);
+    pulseButton(W / 2, 590, 220, 64, '#ffd43b', '#e8a200', 'JOGAR', 32, start);
   }
-  if (best) text('🏆 Recorde: ' + fmt(best), W / 2, 725, 18, '#ffe066');
-  text('versão ' + VERSION, W / 2, 770, 12, '#c5d3ff');
+  // dificuldade do novo jogo
+  text('Dificuldade', W / 2, 682, 14, '#c5d3ff');
+  MODES.forEach((m, i) => {
+    const sel = i === modePref;
+    const x = 30 + i * 132, y = 700;
+    if (sel) uiButton(x, y - 4, 126, 38, m.color, m.dark, m.name, 17, () => {});
+    else uiButton(x, y, 126, 34, '#3b4a7a', '#26315a', m.name, 15, () => {
+      modePref = i;
+      try { localStorage.setItem('shootlines-mode', String(i)); } catch (e) { /* sem storage */ }
+    });
+  });
+  if (best) text('🏆 Recorde: ' + fmt(best), W / 2, 760, 16, '#ffe066');
+  text('versão ' + VERSION, W / 2, 786, 11, '#c5d3ff');
 }
 
 // Menu de pausa: situação do esquadrão, evoluções, habilidades e ameaças.
@@ -2469,7 +2489,7 @@ function drawPauseMenu() {
   const w = WEAPONS[g.weapon];
   fitText('🔫 ' + w.name + (g.locked ? ' 🔒' : '') + `   🔧 ${g.parts}/${partsNeed()}`, 30, 172, W - 60, 16, shade(bulletColor(w), 0.2), 'left');
   fitText(`Dano ×${fmtMul(g.dmgMul)}  •  Cadência ×${fmtMul(g.rateMul)}  •  Poder ${fmt(dps())}/s`, 30, 196, W - 60, 13, '#c5d3ff', 'left');
-  fitText(`📏 ${fmt(g.dist)} m   •   👑 ${g.bossesKilled} bosses   •   ⭐ ${fmt(g.score)}`, 30, 220, W - 60, 13, '#c5d3ff', 'left');
+  fitText(`${mode().name}  •  📏 ${fmt(g.dist)} m  •  👑 ${g.bossesKilled} bosses  •  ⭐ ${fmt(g.score)}`, 30, 220, W - 60, 13, '#c5d3ff', 'left');
 
   // evoluções
   panel(16, 254, W - 32, 128, 16, '#27407a', 3);
@@ -2534,7 +2554,7 @@ function drawGameOver() {
   [
     '⭐ Pontuação: ' + fmt(g.score),
     '⏱ Tempo: ' + fmtTime(g.t) + '   📏 ' + fmt(g.dist) + ' m',
-    '🎖️ Patente: ' + rankInfo(g.tier).name,
+    '🎖️ ' + rankInfo(g.tier).name + '  •  ' + mode().name,
     '👑 Bosses derrotados: ' + g.bossesKilled,
     '🏆 Recorde: ' + fmt(best),
   ].forEach((l, i) => fitText(l, W / 2, 252 + i * 44, W - 100, 19, '#fff'));
