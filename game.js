@@ -99,6 +99,10 @@ const ENEMY_TYPES = {
   spitter: { hp: 5,  spd: 0.8,  dmg: 1.5, r: 16, color: '#da77f2', minD: 2.2, switcher: true },
   brute:   { hp: 10, spd: 0.6,  dmg: 2, r: 22, color: '#ff922b', minD: 2.8 },
   tank:    { hp: 20, spd: 0.45, dmg: 3, r: 28, color: '#868e96', minD: 4 },
+  // meio de jogo (~3:30, ~4:40 e ~5:50 de jogo)
+  shieldbearer: { hp: 8,  spd: 0.55, dmg: 2,   r: 20, color: '#4c6ef5', minD: 7 },   // escudo frontal
+  healer:       { hp: 6,  spd: 0.7,  dmg: 1,   r: 16, color: '#38d9a9', minD: 9 },   // aura de cura
+  glutton:      { hp: 12, spd: 0.55, dmg: 2.5, r: 22, color: '#be4bdb', minD: 11 },  // come os outros
 };
 
 const BOSSES = [
@@ -213,9 +217,9 @@ function sfx(freq, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
 // ---------------------------------------------------------------------------
 // Modos de dificuldade: multiplicam a força dos inimigos e o ritmo de crescimento
 const MODES = [
-  { name: 'Fácil',   mult: 1.6, growth: 1.2,  boss: 1,    color: '#51cf66', dark: '#2b8a3e' },
-  { name: 'Normal',  mult: 2.6, growth: 1.35, boss: 1.25, color: '#ffd43b', dark: '#e8a200' },
-  { name: 'Difícil', mult: 4.2, growth: 1.5,  boss: 1.5,  color: '#ff6b6b', dark: '#c92a2a' },
+  { name: 'Fácil',   mult: 1.6, growth: 1.2,  boss: 1,    floor: 1,    color: '#51cf66', dark: '#2b8a3e' },
+  { name: 'Normal',  mult: 2.6, growth: 1.35, boss: 1.25, floor: 1.25, color: '#ffd43b', dark: '#e8a200' },
+  { name: 'Difícil', mult: 4.2, growth: 1.5,  boss: 1.5,  floor: 1.5,  color: '#ff6b6b', dark: '#c92a2a' },
 ];
 let modePref = 1;
 try { modePref = clamp(+(localStorage.getItem('shootlines-mode') ?? 1) || 0, 0, 2); } catch (e) { /* sem storage */ }
@@ -267,7 +271,7 @@ function refCurve(table, slope) {
   // folga para o jogador médio; a partir dos 12 min a curva vai acelerando aos
   // poucos, para que mesmo quem dispara na frente encontre o fim (~25-30 min)
   const over = Math.max(0, g.t - 720);
-  return v - 0.7 * Math.min(1, g.t / 120) + 0.00004 * over * over;
+  return v - 0.7 * Math.min(1, g.t / 120) + 0.00001 * over * over;
 }
 const refDps = () => Math.exp(refCurve(REF_LN_DPS, 0.04));
 const refPower = () => Math.exp(refCurve(REF_LN_POW, 0.037));
@@ -287,11 +291,20 @@ function hpPerSec() {
   const every = Math.max(0.55, 2.2 - d * 0.22);
   return lanes * perLane * typeAvg / every;
 }
-const enemyScale = () => mode().mult * Math.pow(1.4, threat('armor')) * loadTarget() * refDps() / (hpPerSec() * BUG_HP);
+// Pressão mínima: a partir dos 3 min os bichos exigem uma parte do SEU tempo
+// de tiro, mesmo com dano gigante (0,25 aos 8 min, +0,25 a cada 10 min;
+// ×1,25 no Normal e ×1,5 no Difícil), para não evaporarem antes de aparecer
+const floorRamp = () => clamp((g.t - 180) / 300, 0, 1) + Math.max(0, g.t - 480) / 600;
+const floorLoad = () => 0.25 * floorRamp() * mode().floor;
+const enemyScale = () => Math.pow(1.4, threat('armor')) *
+  Math.max(mode().mult * loadTarget() * refDps(), floorLoad() * dps()) / (hpPerSec() * BUG_HP);
 // dano de contato de um besouro: 6% da força de referência no início, ~9% aos
 // 5 min, ~17% aos 10 (para quem é mais forte que a referência, pesa menos)
 const contactFrac = () => { const tt = gameT(); return 0.06 * (1 + tt / 600) * lateCurve(tt); };
-const enemyDmgScale = () => mode().mult * Math.pow(1.4, threat('fury')) * contactFrac() * refPower();
+// para esquadrões enormes o contato também tem um piso: 2% da SUA força por
+// besouro aos 8 min, +2% a cada 10 min (×modo)
+const enemyDmgScale = () => Math.pow(1.4, threat('fury')) *
+  Math.max(mode().mult * contactFrac() * refPower(), 0.02 * floorRamp() * mode().floor * power());
 const perkLevels = () => Object.values(g.perks).reduce((a, b) => a + b, 0);
 const perk = k => g.perks[k] || 0;
 const rankSize = () => Math.min(1.9, 1 + 0.1 * rank() + 0.02 * (g.tier % SUBLEVELS));
@@ -528,11 +541,11 @@ function spawnCrate() {
 function spawnBoss() {
   const n = g.bossesKilled;
   const B = BOSSES[n % BOSSES.length];
-  // Boss épico: aguenta pelo menos 18 s do SEU tiro direto no 1º boss (+3 s
-  // por boss, até 50 s; mais no Normal/Difícil), nunca menos que o esperado
+  // Boss épico: aguenta pelo menos 30 s do SEU tiro direto no 1º boss (+5 s
+  // por boss, até 80 s; mais no Normal/Difícil), nunca menos que o esperado
   // para o esquadrão de referência
   const warlord = Math.pow(1.5, threat('warlord'));
-  const epic = dps() * Math.min(50, 18 + 3 * n) * mode().boss;
+  const epic = dps() * Math.min(80, 30 + 5 * n) * mode().boss;
   const base = refDps() * Math.min(30, 10 + 1.5 * n) * mode().mult;
   const hp = Math.ceil(Math.max(epic, base) * B.hp * warlord);
   const lane = 1;
@@ -722,6 +735,31 @@ function fire() {
   }
 }
 
+// Curandeiro: cura os bichos em volta (fogo reduz a cura a 30%)
+const HEAL_RADIUS = 110;
+function healAura(h, dt) {
+  for (const o of g.enemies) {
+    if (o.dead || o.hp >= o.maxHp || Math.hypot(o.x - h.x, o.y - h.y) > HEAL_RADIUS) continue;
+    const rate = (o === h ? 0.03 : 0.08) * (o.burn > 0 ? 0.3 : 1);
+    o.hp = Math.min(o.maxHp, o.hp + o.maxHp * rate * dt);
+    if (Math.random() < dt * 4) g.particles.push({ x: o.x + rand(-8, 8), y: o.y, vx: 0, vy: -50, life: 0.5, color: '#69db7c', r: 2.5, up: true });
+  }
+}
+
+// Guloso: engole quem encosta nele e fica com a vida e parte do dano
+function devour(e) {
+  for (const o of g.enemies) {
+    if (o === e || o.dead || o.type === 'glutton' || Math.abs(o.x - e.x) > e.r || Math.abs(o.y - e.y) > e.r + o.r) continue;
+    o.dead = true;
+    e.hp += Math.max(0, o.hp);
+    e.maxHp += o.maxHp;
+    e.dmg += o.dmg * 0.5;
+    e.r = Math.min(ENEMY_TYPES.glutton.r * 2, e.r + 2);
+    burst(o.x, o.y, o.color, 8, 120);
+    addText(e.x, e.y - 30, 'Nhac!', '#e599f7', 14);
+  }
+}
+
 function damageEnemy(e, dmg, silent) {
   if (isGhost(e)) return;
   e.hp -= dmg;
@@ -779,7 +817,7 @@ function rollCrit(dmg, x, y) {
   return dmg * 3;
 }
 
-function hitEnemy(b, e) {
+function hitEnemy(b, e, mul = 1) {
   if (e.shield > 0) {
     // o escudo segura o tiro, mas não a explosão
     e.shield--;
@@ -789,7 +827,7 @@ function hitEnemy(b, e) {
     if (b.splash) splashAt(b.x, b.y, b.splash, b.dmg * b.splashMul);
     return;
   }
-  const dmg = rollCrit(b.dmg, e.x, e.y);
+  const dmg = rollCrit(b.dmg * mul, e.x, e.y);
   damageEnemy(e, dmg);
   if (perk('fire')) { e.burn = 2; e.burnDps = Math.max(e.burnDps, dmg * 0.6 * perk('fire')); }
   if (perk('frost')) { e.slow = 1.5; e.slowF = Math.max(0.4, 1 - 0.12 * perk('frost')); }
@@ -936,7 +974,15 @@ function update(dt) {
       b.hit = b.hit || new Set();
       if (b.hit.has(e.id)) continue;
       b.hit.add(e.id);
-      hitEnemy(b, e);
+      // Escudeiro: o escudo frontal segura a bala (sem atravessar nem quicar)
+      // e corta 40% do dano
+      const front = e.type === 'shieldbearer' && b.vy < 0;
+      if (front) {
+        b.pierce = 0;
+        b.bounce = 0;
+        if (Math.random() < 0.3) burst(b.x, b.y, '#dee2e6', 2, 100);
+      }
+      hitEnemy(b, e, front ? 0.6 : 1);
       if (b.pierce > 0) { b.pierce--; continue; }
       if (b.bounce > 0 && retarget(b, e)) { b.bounce--; break; }
       b.dead = true;
@@ -975,6 +1021,8 @@ function update(dt) {
       if (e.dead) continue;
     }
     if (e.slow > 0) e.slow -= dt;
+    if (e.type === 'healer') healAura(e, dt);
+    if (e.type === 'glutton') devour(e);
     e.ghostT += dt;
     if (e.mod === 'regen' && g.t - e.lastHit > 1 && e.burn <= 0) e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.12 * dt);
     if (e.mod === 'dash' && !e.dashing && e.y > 300) {
@@ -1735,6 +1783,19 @@ function drawEnemy(e) {
       ctx.stroke();
     }
   }
+  if (e.type === 'healer') {
+    // aura de cura no chão
+    ctx.beginPath();
+    ctx.ellipse(0, 0, HEAL_RADIUS, HEAL_RADIUS * 0.45, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(105, 219, 124, .12)';
+    ctx.fill();
+    ctx.setLineDash([10, 8]);
+    ctx.lineDashOffset = -g.t * 30;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(105, 219, 124, .7)';
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
   if (e.rage) {
     // aura vermelha pulsante: criatura enfurecida pelo boss
     ctx.fillStyle = `rgba(255, 50, 50, ${0.25 + 0.15 * Math.sin(g.t * 10 + e.id)})`;
@@ -1787,6 +1848,43 @@ function drawEnemy(e) {
   ctx.beginPath();
   ctx.arc(0, cy + r * 0.32, r * 0.28, 0.15 * Math.PI, 0.85 * Math.PI);
   ink(Math.max(1.5, r / 9));
+  if (e.type === 'healer') {
+    // cruz de cura na testa
+    blob(0, cy - r * 0.62, r * 0.32, '#fff', 2);
+    ctx.fillStyle = '#2f9e44';
+    ctx.fillRect(-r * 0.07, cy - r * 0.8, r * 0.14, r * 0.36);
+    ctx.fillRect(-r * 0.18, cy - r * 0.69, r * 0.36, r * 0.14);
+  }
+  if (e.type === 'glutton') {
+    // bocarra com dentes
+    oval(0, cy + r * 0.35, r * 0.55, r * 0.32, '#3b0a3f', 2.5);
+    ctx.fillStyle = '#fff';
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * r * 0.18 - r * 0.07, cy + r * 0.12);
+      ctx.lineTo(i * r * 0.18 + r * 0.07, cy + r * 0.12);
+      ctx.lineTo(i * r * 0.18, cy + r * 0.3);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  if (e.type === 'shieldbearer') {
+    // escudo-torre na frente (voltado para o esquadrão)
+    roundRect(-r * 1.05, cy - r * 0.1, r * 2.1, r * 1.35, r * 0.35);
+    ctx.fillStyle = '#ced4da';
+    ctx.fill();
+    ink(3);
+    roundRect(-r * 0.8, cy + r * 0.08, r * 1.6, r * 0.98, r * 0.25);
+    ctx.fillStyle = '#4c6ef5';
+    ctx.fill();
+    ink(2);
+    ctx.fillStyle = '#ffd43b';
+    ctx.beginPath();
+    ctx.moveTo(0, cy + r * 0.2); ctx.lineTo(r * 0.28, cy + r * 0.55); ctx.lineTo(0, cy + r * 0.92); ctx.lineTo(-r * 0.28, cy + r * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ink(1.5);
+  }
   if (e.slow > 0) {
     ctx.beginPath(); ctx.arc(0, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(165, 216, 255, .5)';
