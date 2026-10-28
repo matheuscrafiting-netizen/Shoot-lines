@@ -11,8 +11,8 @@ const FORM_MAX = 60;         // soldados desenhados no máximo
 const BOSS_EVERY = 60;       // segundos entre bosses
 const PROMOTE_AT = 300;      // com essa quantidade o esquadrão sobe um subnível sozinho
 const TIER_POWER = 3;        // cada subnível (I..V) vale 3× o anterior
-const SUBLEVELS = 5;
-const ROMAN = ['I', 'II', 'III', 'IV', 'V'];
+const SUBLEVELS = 3;
+const ROMAN = ['I', 'II', 'III'];
 const MAX_FIRE_RATE = 12;    // acima disso a cadência extra vira dano
 const PERK_MAX = 5;
 
@@ -86,10 +86,13 @@ const THREATS = {
 };
 const GENERAL_RANK = 8;
 
-// Enquanto um boss está vivo, as criaturas que surgem ficam enfurecidas; a fúria
-// cresce a cada boss (1º: +30% vida, +15% dano ... até +100% vida, +50% dano)
+// Enquanto um boss está vivo, as criaturas que surgem ficam enfurecidas. O 1º
+// boss não enfurece ninguém; depois a fúria cresce a cada boss (2º: +30% vida,
+// +15% dano ... até +100% vida, +50% dano)
+const NO_RAGE = { hp: 1, dmg: 1, spd: 1, mods: 0 };
 const bossRage = () => {
-  const n = g.bossesKilled;
+  const n = g.bossesKilled - 1;
+  if (!g.boss || n < 0) return NO_RAGE;
   return { hp: Math.min(2, 1.3 + 0.1 * n), dmg: Math.min(1.5, 1.15 + 0.05 * n), spd: Math.min(1.25, 1.08 + 0.03 * n), mods: Math.min(0.3, 0.1 + 0.03 * n) };
 };
 
@@ -188,8 +191,6 @@ const VERSION = (() => {
   try { return new URL(document.currentScript.src).searchParams.get('v') || 'local'; } catch (e) { return 'local'; }
 })();
 
-let best = 0;
-try { best = +localStorage.getItem('shootlines-best') || 0; } catch (e) { /* sem storage */ }
 
 // ---------------------------------------------------------------------------
 // Áudio (bipes simples com WebAudio)
@@ -228,12 +229,13 @@ const mode = () => MODES[g && g.mode != null ? g.mode : modePref];
 let state = 'menu';   // menu | play | paused | choose | over
 let g = null;
 
-function newGame() {
+function newGame(campaign = null) {
   g = {
-    t: 0, soldiers: 5, tier: 0, mode: modePref, lane: 1, x: LANES[1],
-    weapon: 0, rateMul: 1, dmgMul: 1, fireCd: 0,
-    locked: false, perks: {}, lastPerk: null, pendingEvo: 0, choice: null, parts: 0, threats: {}, saveT: 0,
-    skills: { shield: 0, grenade: 2, turret: 0, medic: 8, air: 5 }, shieldUp: false,
+    t: 0, soldiers: 5 + 3 * upLevel('recruits'), tier: 0, mode: modePref, lane: 1, x: LANES[1],
+    weapon: 0, rateMul: 1 + 0.05 * upLevel('rate'), dmgMul: 1 + 0.1 * upLevel('damage'), fireCd: 0,
+    perks: {}, lastPerk: null, pendingEvo: 0, choice: null, parts: 0, threats: {}, saveT: 0,
+    skills: { shield: 0, grenade: 2, turret: 0, medic: 8, air: 5 }, shieldUp: upLevel('shield') > 0,
+    campaign, finalSpawned: false, peak: 0, kills: 0, waves: 0, toasts: [], readyT: 0, coinsEarned: 0, stars: 0,
     bullets: [], enemies: [], gates: [], crates: [], projectiles: [],
     particles: [], texts: [], zaps: [], rings: [], grenades: [], planes: [],
     score: 0, dist: 0, lastCritT: 0,
@@ -241,6 +243,9 @@ function newGame() {
     boss: null, bossesKilled: 0, banner: null,
     shake: 0, flash: 0, flashColor: '#fff', scroll: 0, overT: 0, nextId: 1,
   };
+  // kit inicial: peças já contadas (pode abrir uma escolha logo no começo)
+  if (upLevel('kit')) gainParts(upLevel('kit'), LANES[1]);
+  g.texts = [];
 }
 
 const diff = () => 1 + g.t / 35;
@@ -296,14 +301,14 @@ function hpPerSec() {
 // ×1,25 no Normal e ×1,5 no Difícil), para não evaporarem antes de aparecer
 const floorRamp = () => clamp((g.t - 180) / 300, 0, 1) + Math.max(0, g.t - 480) / 600;
 const floorLoad = () => 0.25 * floorRamp() * mode().floor;
-const enemyScale = () => Math.pow(1.4, threat('armor')) *
+const enemyScale = () => Math.pow(1.4, threat('armor')) * stageMult() *
   Math.max(mode().mult * loadTarget() * refDps(), floorLoad() * dps()) / (hpPerSec() * BUG_HP);
 // dano de contato de um besouro: 6% da força de referência no início, ~9% aos
 // 5 min, ~17% aos 10 (para quem é mais forte que a referência, pesa menos)
 const contactFrac = () => { const tt = gameT(); return 0.06 * (1 + tt / 600) * lateCurve(tt); };
 // para esquadrões enormes o contato também tem um piso: 2% da SUA força por
 // besouro aos 8 min, +2% a cada 10 min (×modo)
-const enemyDmgScale = () => Math.pow(1.4, threat('fury')) *
+const enemyDmgScale = () => Math.pow(1.4, threat('fury')) * stageMult() *
   Math.max(mode().mult * contactFrac() * refPower(), 0.02 * floorRamp() * mode().floor * power());
 const perkLevels = () => Object.values(g.perks).reduce((a, b) => a + b, 0);
 const perk = k => g.perks[k] || 0;
@@ -389,6 +394,8 @@ function promote(divisor, x) {
   g.soldiers = Math.max(1, Math.ceil(g.soldiers / divisor));
   const r = rankInfo(g.tier);
   addText(x, PLAYER_Y - 110, '⬆ ' + r.name + '!', r.color, 28);
+  missionMax('rank', rank());
+  showTip('rank', '🎖️', 'Subiu de patente!', 'A cada 300 soldados: ÷3 soldados, cada um vale 3×. Novas patentes liberam habilidades.');
   burst(x, PLAYER_Y - 10, '#ffd43b', 30, 240);
   g.flash = 0.25; g.flashColor = '#ffe066';
   sfx(440, 0.25, 'triangle', 0.08, 500);
@@ -411,18 +418,175 @@ function addSoldiers(n) {
 }
 
 // ---------------------------------------------------------------------------
+// Progresso entre partidas: moedas, loja, visuais, campanha, missões e dicas
+// ---------------------------------------------------------------------------
+const META_KEY = 'shootlines-meta';
+const UPGRADES = [
+  { key: 'recruits', icon: '👥', name: 'Recrutas',       max: 10, cost: l => Math.round(40 * Math.pow(1.45, l)),  desc: l => `Começa com +${3 * l} soldados` },
+  { key: 'damage',   icon: '💪', name: 'Treino de tiro', max: 20, cost: l => Math.round(60 * Math.pow(1.35, l)),  desc: l => `+${10 * l}% de dano base` },
+  { key: 'rate',     icon: '⚡', name: 'Gatilho rápido', max: 10, cost: l => Math.round(60 * Math.pow(1.4, l)),   desc: l => `+${5 * l}% de cadência base` },
+  { key: 'kit',      icon: '🔧', name: 'Kit inicial',    max: 3,  cost: l => 150 * (l + 1),                       desc: l => `Começa com ${l} peça${l > 1 ? 's' : ''}` },
+  { key: 'shield',   icon: '🛡️', name: 'Escudo inicial', max: 1,  cost: () => 250,                                desc: () => 'Começa com escudo que bloqueia 1 golpe' },
+  { key: 'luck',     icon: '🍀', name: 'Sorte',          max: 5,  cost: l => Math.round(80 * Math.pow(1.5, l)),   desc: l => `+${6 * l}% de chance de 2 portões bons` },
+];
+// visuais da munição (cor base dos tiros; evoluções ainda pintam por cima)
+const SKINS = [
+  { key: 'classic', name: 'Clássica', color: null,      cost: 0 },
+  { key: 'gold',    name: 'Dourada',  color: '#ffd43b', cost: 300 },
+  { key: 'plasma',  name: 'Plasma',   color: '#4dabf7', cost: 400 },
+  { key: 'toxic',   name: 'Tóxica',   color: '#94d82d', cost: 500 },
+  { key: 'rainbow', name: 'Arco-íris', color: 'rainbow', cost: 900 },
+];
+const MISSIONS = [
+  { id: 'bosses',  goals: [2, 3, 5],       reward: 60, text: n => `Derrote ${n} bosses` },
+  { id: 'kills',   goals: [300, 600, 1000], reward: 50, text: n => `Elimine ${n} bichos` },
+  { id: 'rank',    goals: [2, 3, 4],       reward: 70, text: n => `Chegue a ${RANKS[n].name}` },
+  { id: 'survive', goals: [3, 5, 8],       reward: 60, text: n => `Sobreviva ${n} min numa partida` },
+  { id: 'stage',   goals: [1, 2],          reward: 80, text: n => `Complete ${n} fase${n > 1 ? 's' : ''} da campanha` },
+  { id: 'evos',    goals: [5, 10],         reward: 50, text: n => `Escolha ${n} evoluções` },
+];
+
+function loadMeta() {
+  let m = null;
+  try { m = JSON.parse(localStorage.getItem(META_KEY)); } catch (e) { /* sem storage */ }
+  m = Object.assign({ coins: 0, up: {}, skin: 'classic', skins: ['classic'], stage: 1, stars: {}, seen: {}, daily: null, best: 0 }, m || {});
+  return m;
+}
+let meta = loadMeta();
+function saveMeta() {
+  try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch (e) { /* sem storage */ }
+}
+const upLevel = k => meta.up[k] || 0;
+
+function buyUpgrade(k) {
+  const U = UPGRADES.find(u => u.key === k);
+  const l = upLevel(k);
+  if (l >= U.max || meta.coins < U.cost(l)) { sfx(150, 0.1, 'square', 0.04); return; }
+  meta.coins -= U.cost(l);
+  meta.up[k] = l + 1;
+  saveMeta();
+  sfx(880, 0.12, 'triangle', 0.06, 300);
+}
+
+function buySkin(k) {
+  const S = SKINS.find(s => s.key === k);
+  if (meta.skins.includes(k)) meta.skin = k;
+  else if (meta.coins >= S.cost) { meta.coins -= S.cost; meta.skins.push(k); meta.skin = k; }
+  else { sfx(150, 0.1, 'square', 0.04); return; }
+  saveMeta();
+  sfx(880, 0.12, 'triangle', 0.06, 300);
+}
+
+// --- missões diárias: 3 por dia, sorteadas pela data
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+function ensureDaily() {
+  const key = todayKey();
+  if (meta.daily && meta.daily.date === key) return;
+  let seed = 0;
+  for (const ch of key) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const pool = MISSIONS.slice();
+  const list = [];
+  while (list.length < 3) {
+    const M = pool.splice(Math.floor(rnd() * pool.length), 1)[0];
+    list.push({ id: M.id, goal: M.goals[Math.floor(rnd() * M.goals.length)], prog: 0, done: false });
+  }
+  meta.daily = { date: key, list };
+  saveMeta();
+}
+function missionUpdate(id, f) {
+  ensureDaily();
+  for (const m of meta.daily.list) {
+    if (m.id !== id || m.done) continue;
+    m.prog = f(m.prog);
+    if (m.prog >= m.goal) {
+      m.done = true;
+      const M = MISSIONS.find(x => x.id === id);
+      meta.coins += M.reward;
+      if (g) g.toasts.push({ icon: '✅', title: 'Missão concluída!', text: `${M.text(m.goal)} — +${M.reward} 🪙`, life: 4 });
+      saveMeta();
+    }
+  }
+}
+const missionAdd = (id, n) => missionUpdate(id, p => p + n);
+const missionMax = (id, v) => missionUpdate(id, p => Math.max(p, v));
+
+// --- dicas: aparecem só na primeira vez
+function showTip(key, icon, title, text) {
+  if (!g || meta.seen[key]) return;
+  meta.seen[key] = 1;
+  saveMeta();
+  g.toasts.push({ icon, title, text, life: 5 });
+}
+const ENEMY_INFO = {
+  runner:       ['🏃', 'Corredor', 'Rápido e frágil: mate antes que escape.'],
+  spitter:      ['🟣', 'Cuspidor', 'Troca de faixa para te perseguir.'],
+  brute:        ['🦏', 'Brutamontes', 'Vida alta e golpe forte.'],
+  tank:         ['🪨', 'Tanque', 'Muito resistente: desvie se não der tempo.'],
+  shieldbearer: ['🛡️', 'Escudeiro', 'O escudo para balas que atravessariam e corta 40% do dano.'],
+  healer:       ['💚', 'Curandeiro', 'Cura os bichos em volta. Mate primeiro!'],
+  glutton:      ['👄', 'Guloso', 'Engole outros bichos e fica com a vida deles.'],
+};
+const MOD_TIPS = {
+  shield:   'Bloqueia os primeiros tiros. Explosões e raios atravessam.',
+  dash:     'Dispara em alta velocidade quando chega perto.',
+  ghost:    'Fica intangível de tempos em tempos.',
+  elite:    'Mais forte; derrotar dá uma peça 🔧.',
+  regen:    'Se cura se ficar sem levar dano. Fogo impede.',
+  splitter: 'Ao morrer, vira dois menores.',
+};
+
+// --- campanha: fases de 2:30 a 5:30 + chefe final, cada fase mais forte
+const stageLen = n => 150 + 30 * Math.min(n - 1, 6);
+// fase 1 bem leve (porta de entrada); cada fase seguinte +18%
+const stageMult = () => g.campaign ? 0.6 * Math.pow(1.18, g.campaign - 1) : 1;
+
+function runCoins() {
+  const base = Math.floor(g.t / 10) + 12 * g.bossesKilled + 4 * rank() + Math.floor(g.kills / 50);
+  return Math.round(base * [1, 1.3, 1.6][g.mode]);
+}
+
+function computeScore() {
+  return Math.round((g.dist * 2 + g.kills * 5 + g.bossesKilled * 500 + g.tier * 100) * [1, 1.5, 2][g.mode]);
+}
+
+function stageClear() {
+  const keep = power() / Math.max(1, g.peak);
+  const stars = 1 + (keep >= 0.4 ? 1 : 0) + (keep >= 0.75 ? 1 : 0);
+  g.stars = stars;
+  const n = g.campaign;
+  meta.stars[n] = Math.max(meta.stars[n] || 0, stars);
+  if (meta.stage === n) meta.stage = n + 1;
+  g.coinsEarned = runCoins() + 25 + 15 * stars + 5 * n;
+  meta.coins += g.coinsEarned;
+  missionAdd('stage', 1);
+  missionMax('survive', Math.floor(g.t / 60));
+  saveMeta();
+  clearSave();
+  state = 'clear';
+  g.overT = 0;
+  g.flash = 0.5; g.flashColor = '#ffe066';
+  sfx(523, 0.15, 'triangle', 0.08); sfx(659, 0.25, 'triangle', 0.07); sfx(784, 0.4, 'triangle', 0.07);
+}
+
+// ---------------------------------------------------------------------------
 // Salvar e continuar
 // ---------------------------------------------------------------------------
-const SAVE_KEY = 'shootlines-save';
-const SAVE_FIELDS = ['mode', 't', 'soldiers', 'tier', 'weapon', 'rateMul', 'dmgMul', 'locked', 'perks', 'lastPerk',
-  'pendingEvo', 'parts', 'skills', 'shieldUp', 'score', 'dist', 'rows', 'bossCd', 'bossesKilled', 'threats', 'lane'];
+const SAVE_KEY = 'shootlines-save-v2';
+const SAVE_FIELDS = ['mode', 't', 'soldiers', 'tier', 'weapon', 'rateMul', 'dmgMul', 'perks', 'lastPerk',
+  'pendingEvo', 'parts', 'skills', 'shieldUp', 'score', 'dist', 'rows', 'bossCd', 'bossesKilled', 'threats', 'lane', 'x',
+  'campaign', 'finalSpawned', 'peak', 'kills', 'waves', 'nextId', 'spawnCd', 'gateCd', 'crateCd',
+  'enemies', 'boss', 'gates', 'crates', 'projectiles'];
 
 function saveGame() {
   if (!g || state === 'over' || state === 'menu' || g.soldiers <= 0) return;
   try {
     const o = {};
     for (const k of SAVE_FIELDS) o[k] = g[k];
-    if (g.boss) o.bossCd = 4;   // o boss em andamento volta do começo
+    saveMeta();   // progresso das missões
     localStorage.setItem(SAVE_KEY, JSON.stringify(o));
   } catch (e) { /* sem storage */ }
 }
@@ -441,10 +605,11 @@ function gameOver() {
   state = 'over';
   g.overT = 0;
   burst(g.x, PLAYER_Y, '#4dabf7', 40, 260);
-  if (g.score > best) {
-    best = Math.floor(g.score);
-    try { localStorage.setItem('shootlines-best', best); } catch (e) { /* sem storage */ }
-  }
+  g.coinsEarned = runCoins();
+  meta.coins += g.coinsEarned;
+  missionMax('survive', Math.floor(g.t / 60));
+  if (!g.campaign && g.score > meta.best) meta.best = g.score;
+  saveMeta();
   sfx(200, 0.6, 'sawtooth', 0.1, -170);
 }
 
@@ -461,8 +626,8 @@ function spawnEnemy(typeKey, lane, y, mod = null, hpMul = 1) {
   const T = ENEMY_TYPES[typeKey];
   const d = diff();
   const elite = mod === 'elite';
-  const rage = !!g.boss;
   const R = bossRage();
+  const rage = R !== NO_RAGE;
   const hp = Math.ceil(T.hp * enemyScale() * hpMul * (elite ? 4 : 1) * (rage ? R.hp : 1));
   const e = {
     id: g.nextId++, type: typeKey, lane, x: LANES[lane], tx: LANES[lane], y,
@@ -475,6 +640,8 @@ function spawnEnemy(typeKey, lane, y, mod = null, hpMul = 1) {
     ghostT: rand(0, 2.4), lastHit: 0, dashing: false, child: false,
   };
   g.enemies.push(e);
+  if (ENEMY_INFO[typeKey]) showTip('enemy-' + typeKey, ...ENEMY_INFO[typeKey]);
+  if (mod) showTip('mod-' + mod, MODS[mod].icon, MODS[mod].name, MOD_TIPS[mod]);
   return e;
 }
 
@@ -485,6 +652,7 @@ function spawnWave() {
   const types = Object.keys(ENEMY_TYPES).filter(k => ENEMY_TYPES[k].minD <= d);
   const lanesCount = Math.random() < Math.min(0.6, 0.15 + d * 0.08) ? 2 : 1;
   const lanes = shuffle([0, 1, 2]).slice(0, lanesCount);
+  g.waves++;
   for (const lane of lanes) {
     const n = Math.round(rint(1, Math.min(6, 1 + Math.floor(d * 0.7))) * (1 + 0.25 * threat('horde')));
     const type = pick(types);
@@ -512,7 +680,7 @@ function badCell(d) {
 
 function spawnGateRow() {
   const d = diff();
-  const goods = g.rows++ < 2 || Math.random() < 0.5 ? 2 : 1;
+  const goods = g.rows++ < 2 || Math.random() < 0.5 + 0.06 * upLevel('luck') ? 2 : 1;
   const cells = [];
   for (let i = 0; i < 3; i++) cells.push(i < goods ? goodCell(d) : badCell(d));
   shuffle(cells);
@@ -538,23 +706,27 @@ function spawnCrate() {
   g.crates.push({ lane: rint(0, 2), y: -40, hp, maxHp: hp, reward, hitT: 0 });
 }
 
-function spawnBoss() {
+function spawnBoss(final = false) {
   const n = g.bossesKilled;
-  const B = BOSSES[n % BOSSES.length];
-  // Boss épico: aguenta pelo menos 30 s do SEU tiro direto no 1º boss (+5 s
-  // por boss, até 80 s; mais no Normal/Difícil), nunca menos que o esperado
-  // para o esquadrão de referência
+  const B = BOSSES[(final ? g.campaign - 1 : n) % BOSSES.length];
+  // Boss épico: o 1º aguenta 15 s do SEU tiro direto; do 2º em diante 30 s,
+  // +5 s por boss (até 80 s); o chefe de fase 20 s +5 s por fase (até 70 s);
+  // mais no Normal/Difícil; nunca menos que o esperado para o esquadrão de referência
   const warlord = Math.pow(1.5, threat('warlord'));
-  const epic = dps() * Math.min(80, 30 + 5 * n) * mode().boss;
-  const base = refDps() * Math.min(30, 10 + 1.5 * n) * mode().mult;
+  const secs = final ? Math.min(70, 20 + 5 * (g.campaign - 1)) : n === 0 ? 15 : Math.min(80, 30 + 5 * (n - 1));
+  const epic = dps() * secs * mode().boss;
+  const base = refDps() * Math.min(30, 10 + 1.5 * n) * mode().mult * stageMult();
   const hp = Math.ceil(Math.max(epic, base) * B.hp * warlord);
   const lane = 1;
   g.boss = {
-    kind: B.kind, name: B.name, color: B.color, lane, x: LANES[lane], tx: LANES[lane],
+    final, kind: B.kind, name: (final ? 'Chefe: ' : '') + B.name, color: B.color, lane, x: LANES[lane], tx: LANES[lane],
     y: -160, baseY: 150, mode: 'enter', hp, maxHp: hp, moveCd: 3, atkCd: 2.5, summonCd: 4,
     tele: null, hitT: 0, t: 0, level: n + 1, burn: 0, burnDps: 0, phases: [0.75, 0.5, 0.25], shieldT: 0,
   };
-  g.banner = { text: 'BOSS: ' + B.name, tip: B.tip + ' As criaturas ficam enfurecidas!', life: 3.2 };
+  g.banner = final
+    ? { text: 'CHEFE DA FASE: ' + B.name, tip: 'Derrote-o para completar a fase!', life: 3.4 }
+    : { text: 'BOSS: ' + B.name, tip: B.tip + (n > 0 ? ' As criaturas ficam enfurecidas!' : ''), life: 3.2 };
+  g.spawnCd = Math.max(g.spawnCd, 4);   // pausa nas ondas para a entrada do boss
   g.shake = 14;
   g.flash = 0.3; g.flashColor = '#ff2222';
   sfx(80, 0.8, 'sawtooth', 0.1, 120);
@@ -562,53 +734,43 @@ function spawnBoss() {
 }
 
 // ---------------------------------------------------------------------------
-// Arma: troca, trava e evoluções
+// Peças: cada conjunto de peças vira uma escolha entre a próxima arma e
+// evoluções. As evoluções são do esquadrão e continuam ao trocar de arma.
 // ---------------------------------------------------------------------------
-const evolves = () => g.locked || g.weapon >= WEAPONS.length - 1;
-
-const partsNeed = () => evolves() ? 3 + Math.floor(perkLevels() / 2) : 2 + g.weapon;
+const partsNeed = () => 2 + Math.floor((g.weapon + perkLevels()) * 0.6);
+const weaponDps = w => w.dmg * w.rate * (w.pellets || 1);
 
 function gainParts(n, x) {
   g.parts += n;
   addText(x, PLAYER_Y - 70, `🔧 +${n} peça${n > 1 ? 's' : ''}`, '#ffe066', 20);
   while (g.parts >= partsNeed()) {
     g.parts -= partsNeed();
-    upgradeWeapon(x);
+    g.pendingEvo++;
   }
 }
 
-function upgradeWeapon(x) {
-  if (evolves()) { grantEvo(x); return; }
-  g.weapon++;
-  const lost = perkLevels() > 0;
-  g.perks = {};
-  g.lastPerk = null;
-  addText(x, PLAYER_Y - 70, WEAPONS[g.weapon].name + '!', '#ffe066', 26);
-  if (lost) addText(x, PLAYER_Y - 100, 'Evoluções perdidas', '#ff8787', 16);
-}
-
-function grantEvo(x) {
-  g.pendingEvo++;
-  addText(x, PLAYER_Y - 70, '⭐ Evolução!', '#ffe066', 26);
-}
-
-function toggleLock() {
-  if (!g || state !== 'play') return;
-  g.locked = !g.locked;
-  addText(g.x, PLAYER_Y - 100, g.locked ? '🔒 Arma travada' : '🔓 Arma destravada', '#ffe066', 20);
-  sfx(g.locked ? 660 : 330, 0.1, 'triangle', 0.06);
-}
+// Combos: duas evoluções no nível 3 ou mais destravam um efeito extra
+const COMBOS = [
+  { key: 'napalm',   a: 'fire',  b: 'explosive', icon: '🌋', name: 'Napalm',           desc: 'As explosões também incendeiam' },
+  { key: 'blizzard', a: 'frost', b: 'chain',     icon: '🌨️', name: 'Nevasca elétrica', desc: 'O raio em cadeia também congela' },
+  { key: 'hunter',   a: 'pierce', b: 'homing',   icon: '🦅', name: 'Caçadora',         desc: 'Balas teleguiadas atravessam +2 bichos' },
+  { key: 'silver',   a: 'crit',  b: 'ricochet',  icon: '🥈', name: 'Bala de prata',    desc: 'Todo ricochete acerta crítico' },
+];
+const combo = k => COMBOS.some(c => c.key === k && perk(c.a) >= 3 && perk(c.b) >= 3);
 
 function openChoice() {
-  const avail = Object.keys(PERKS).filter(k => perk(k) < PERK_MAX);
-  if (!avail.length) {
+  const avail = shuffle(Object.keys(PERKS).filter(k => perk(k) < PERK_MAX));
+  const canWeapon = g.weapon < WEAPONS.length - 1;
+  if (!avail.length && !canWeapon) {
     g.pendingEvo--;
     g.dmgMul += 0.3;
     addText(g.x, PLAYER_Y - 70, '+30% dano', '#ffe066', 24);
     return;
   }
-  g.choice = { options: shuffle(avail).slice(0, 3), t: 0 };
+  const options = canWeapon ? ['weapon', ...avail.slice(0, 2)] : avail.slice(0, 3);
+  g.choice = { options: shuffle(options), t: 0 };
   state = 'choose';
+  showTip('choice', '🔧', 'Peças completas!', 'Escolha uma arma nova ou uma evolução. As evoluções continuam ao trocar de arma.');
   sfx(700, 0.2, 'triangle', 0.06, 300);
 }
 
@@ -616,14 +778,27 @@ function choosePerk(i) {
   if (state !== 'choose' || !g.choice || g.choice.t < 0.35) return;
   const k = g.choice.options[i];
   if (!k) return;
-  g.perks[k] = perk(k) + 1;
-  g.lastPerk = k;
   g.pendingEvo--;
   g.choice = null;
   state = 'play';
+  sfx(880, 0.15, 'triangle', 0.07, 400);
+  if (k === 'weapon') {
+    g.weapon++;
+    addText(g.x, PLAYER_Y - 90, '🔫 ' + WEAPONS[g.weapon].name + '!', '#ffe066', 24);
+    burst(g.x, PLAYER_Y - 10, WEAPONS[g.weapon].color, 24, 220);
+    return;
+  }
+  const before = COMBOS.filter(c => combo(c.key)).length;
+  g.perks[k] = perk(k) + 1;
+  g.lastPerk = k;
+  missionAdd('evos', 1);
   addText(g.x, PLAYER_Y - 90, PERKS[k].icon + ' ' + PERKS[k].name + ' ' + perk(k), PERKS[k].color, 20);
   burst(g.x, PLAYER_Y - 10, PERKS[k].color, 24, 220);
-  sfx(880, 0.15, 'triangle', 0.07, 400);
+  const now = COMBOS.filter(c => combo(c.key));
+  if (now.length > before) {
+    const c = now[now.length - 1];
+    g.banner = { text: 'Combo: ' + c.icon + ' ' + c.name, tip: c.desc, life: 2.8, good: true };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -634,7 +809,7 @@ function cellLabel(c) {
     case 'add': return (c.v >= 0 ? '+' : '') + c.v;
     case 'mul': return '×' + c.v;
     case 'div': return '÷' + c.v;
-    case 'weapon': return `🔧 Peça ${g.parts}/${partsNeed()}`;
+    case 'weapon': return '🔧 Peça';
     case 'rank': return '⬆ Promover';
     case 'rate': return (c.v > 0 ? '+' : '') + c.v + '% Cadência';
     case 'dmg': return (c.v > 0 ? '+' : '') + c.v + '% Dano';
@@ -693,7 +868,10 @@ function applyEffect(c, x) {
 // Tiro
 // ---------------------------------------------------------------------------
 function bulletColor(w) {
-  return g.lastPerk ? PERKS[g.lastPerk].color : w.color;
+  if (g.lastPerk) return PERKS[g.lastPerk].color;
+  const skin = SKINS.find(s => s.key === meta.skin);
+  if (skin && skin.color === 'rainbow') return `hsl(${Math.floor(g.t * 240) % 360}, 90%, 60%)`;
+  return (skin && skin.color) || w.color;
 }
 
 function fire() {
@@ -709,7 +887,7 @@ function fire() {
   const explosive = perk('explosive');
   const base = {
     color: bulletColor(w), size: w.size * (1 + 0.1 * Math.min(rank(), 6)),
-    pierce: (w.pierce || 0) + perk('pierce'),
+    pierce: (w.pierce || 0) + perk('pierce') + (combo('hunter') ? 2 : 0),
     splash: Math.max(w.splash || 0, explosive ? 30 + 12 * explosive : 0),
     splashMul: w.splash ? 0.6 + 0.1 * explosive : 0.3 + 0.1 * explosive,
     bounce: perk('ricochet'), homing: perk('homing'), speed: w.speed,
@@ -767,7 +945,8 @@ function damageEnemy(e, dmg, silent) {
   if (!silent) e.hitT = 0.08;
   if (e.hp <= 0 && !e.dead) {
     e.dead = true;
-    g.score += e.maxHp * 10;
+    g.kills++;
+    missionAdd('kills', 1);
     if (e.mod === 'splitter') {
       for (const off of [-14, 14]) {
         const c = spawnEnemy(e.type, e.lane, e.y + off, null, 0.35);
@@ -790,7 +969,9 @@ function splashAt(x, y, radius, dmg) {
   g.rings.push({ x, y, r: radius, life: 0.3, max: 0.3 });
   g.shake = Math.min(6, g.shake + 0.6);
   for (const e of g.enemies) {
-    if (!e.dead && Math.hypot(e.x - x, e.y - y) < radius + e.r) damageEnemy(e, dmg, true);
+    if (e.dead || Math.hypot(e.x - x, e.y - y) >= radius + e.r) continue;
+    damageEnemy(e, dmg, true);
+    if (combo('napalm')) { e.burn = 2; e.burnDps = Math.max(e.burnDps, dmg * 0.3); }
   }
 }
 
@@ -803,6 +984,7 @@ function chainFrom(src, dmg, count) {
   for (const e of near) {
     g.zaps.push({ x1: from.x, y1: from.y, x2: e.x, y2: e.y, life: 0.15 });
     damageEnemy(e, dmg, true);
+    if (combo('blizzard')) { e.slow = 1.5; e.slowF = 0.5; }
     from = e;
   }
 }
@@ -827,7 +1009,7 @@ function hitEnemy(b, e, mul = 1) {
     if (b.splash) splashAt(b.x, b.y, b.splash, b.dmg * b.splashMul);
     return;
   }
-  const dmg = rollCrit(b.dmg * mul, e.x, e.y);
+  const dmg = b.bounced && combo('silver') ? b.dmg * mul * 3 : rollCrit(b.dmg * mul, e.x, e.y);
   damageEnemy(e, dmg);
   if (perk('fire')) { e.burn = 2; e.burnDps = Math.max(e.burnDps, dmg * 0.6 * perk('fire')); }
   if (perk('frost')) { e.slow = 1.5; e.slowF = Math.max(0.4, 1 - 0.12 * perk('frost')); }
@@ -847,6 +1029,7 @@ function retarget(b, from) {
   const dx = bestE.x - b.x, dy = bestE.y - b.y, len = Math.hypot(dx, dy) || 1;
   b.vx = dx / len * b.speed;
   b.vy = dy / len * b.speed;
+  b.bounced = true;
   g.zaps.push({ x1: from.x, y1: from.y, x2: from.x + dx * 0.3, y2: from.y + dy * 0.3, life: 0.1, color: '#b197fc' });
   return true;
 }
@@ -874,12 +1057,21 @@ function steer(b, dt) {
 // Atualização
 // ---------------------------------------------------------------------------
 function update(dt) {
+  for (const t of g.toasts) t.life -= dt;
+  g.toasts = g.toasts.filter(t => t.life > 0);
+  if (g.readyT > 0) { g.readyT -= dt; return; }   // "Prepare-se" ao continuar
   g.t += dt;
+  g.peak = Math.max(g.peak, power());
+  if (g.t > 1 && g.t < 1.1) showTip('move', '👆', 'Como jogar', 'Toque ou arraste na faixa para mudar de lado. O esquadrão atira sozinho.');
+  // campanha: chefe da fase quando o tempo acaba
+  if (g.campaign && !g.finalSpawned && g.t >= stageLen(g.campaign) && !g.boss) {
+    g.finalSpawned = true;
+    spawnBoss(true);
+  }
   const d = diff();
   const ws = worldSpeed();
   g.scroll = (g.scroll + ws * dt) % 2400;   // múltiplo de todos os padrões do chão
   g.dist += ws * dt / 20;
-  g.score += ws * dt * 0.1;
   g.shake = Math.max(0, g.shake - dt * 30);
   g.flash = Math.max(0, g.flash - dt);
 
@@ -895,7 +1087,7 @@ function update(dt) {
   }
 
   // Spawns
-  if (!g.boss) {
+  if (!g.boss && !(g.campaign && g.t >= stageLen(g.campaign) - 20)) {
     g.bossCd -= dt;
     if (g.bossCd <= 0) spawnBoss();
   }
@@ -962,7 +1154,6 @@ function update(dt) {
       if (p.hp <= 0) {
         p.dead = true;
         burst(p.x, p.y, '#a0522d', 14, 200);
-        g.score += 50;
       }
       break;
     }
@@ -1120,6 +1311,9 @@ function update(dt) {
   g.rings = g.rings.filter(r => r.life > 0);
   if (g.banner) { g.banner.life -= dt; if (g.banner.life <= 0) g.banner = null; }
 
+  g.score = computeScore();
+  if (g.rows === 1 && g.gates.length) showTip('gates', '🟩', 'Portões', 'Passe pelos verdes. Atire nos "+N" para aumentar o número antes de passar.');
+  if (escapeLanes(myLane).length) showTip('escape', '⚠️', 'Bicho escapando!', 'Bichos que passam pelas outras faixas também tiram soldados. Troque de faixa para pegá-los.');
   g.saveT += dt;
   if (g.saveT > 5) { g.saveT = 0; saveGame(); }
   if (g.pendingEvo > 0) openChoice();
@@ -1128,6 +1322,13 @@ function update(dt) {
 // ---------------------------------------------------------------------------
 // Habilidades de patente
 // ---------------------------------------------------------------------------
+// faixas (fora a sua) com bicho prestes a escapar
+function escapeLanes(myLane) {
+  const lanes = new Set();
+  for (const e of g.enemies) if (!e.dead && e.lane !== myLane && e.y > PLAYER_Y - 260 && e.y < PLAYER_Y + 20) lanes.add(e.lane);
+  return [...lanes];
+}
+
 function updateSkills(dt, myLane) {
   const s = g.skills;
   if (rank() >= 2 && !g.shieldUp) {
@@ -1297,7 +1498,12 @@ function updateBoss(dt, myLane) {
     sfx(300, 0.4, 'triangle', 0.08, 300);
   }
   bo.x += (bo.tx - bo.x) * Math.min(1, dt * 3);
-  if (bo.mode !== 'enter') bo.baseY += 4 * dt;   // avança lentamente
+  // avança devagar até a metade da pista; lá fica furioso (ataca mais rápido)
+  if (bo.mode !== 'enter') bo.baseY = Math.min(380, bo.baseY + 4 * dt);
+  if (bo.baseY >= 380 && !bo.cornered) {
+    bo.cornered = true;
+    g.banner = { text: bo.name + ' está furioso!', tip: 'Ele ataca mais rápido. Acabe com ele!', life: 2.2 };
+  }
 
   if (bo.mode === 'enter') {
     bo.y += 110 * dt;
@@ -1332,6 +1538,7 @@ function updateBoss(dt, myLane) {
     if (bo.atkCd <= 0) {
       bossAttack(bo, myLane);
       if (bo.hp / bo.maxHp < 0.33) bo.atkCd *= 0.7;   // fúria no fim da luta
+      if (bo.cornered) bo.atkCd *= 0.6;
       bo.atkCd *= Math.pow(0.85, threat('warlord'));
     }
   }
@@ -1359,23 +1566,21 @@ function updateBoss(dt, myLane) {
     }
   }
 
-  if (bo.baseY + 60 >= PLAYER_Y - 30) {
-    loseSoldiers(g.soldiers, g.x);
-    return;
-  }
 
   if (bo.hp <= 0) {
     for (let i = 0; i < 6; i++) burst(bo.x + rand(-50, 50), bo.y + rand(-40, 40), i % 2 ? bo.color : '#ffd43b', 20, 300);
     g.shake = 18;
     g.flash = 0.4; g.flashColor = '#ffffff';
-    g.score += 5000 * bo.level;
     const bonus = 5 + 2 * bo.level;
     addText(W / 2, 300, 'BOSS DERROTADO!', '#ffe066', 34);
     addText(W / 2, 340, '+' + bonus + ' soldados', '#8ce99a', 20);
     addSoldiers(bonus);
     gainParts(2, g.x);
     g.bossesKilled++;
+    missionAdd('bosses', 1);
+    const wasFinal = bo.final;
     g.boss = null;
+    if (wasFinal) { stageClear(); return; }
     g.projectiles = [];
     g.bossCd = rank() >= GENERAL_RANK ? 45 : BOSS_EVERY;
     if (rank() >= GENERAL_RANK) addThreat();
@@ -2392,7 +2597,6 @@ function drawEffects() {
 // ---------------------------------------------------------------------------
 // Interface
 // ---------------------------------------------------------------------------
-const LOCK_BTN = { x: W - 126, y: H - 56, w: 116, h: 42 };
 const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
 // Botões tocáveis desenhados neste quadro (recriados a cada desenho)
@@ -2429,8 +2633,15 @@ function bar(x, y, w, h, frac, color) {
 
 const pct = (v, max) => Math.max(0, Math.ceil(v / max * 100)) + '%';
 
+function coinPill(x, y) {
+  panel(x, y, 120, 36, 14, '#27407a');
+  blob(x + 18, y + 18, 11, '#ffcc33', 2.5);
+  text('$', x + 18, y + 18, 13, '#b35c00');
+  fitText(fmt(meta.coins), x + 36, y + 18, 78, 18, '#ffe066', 'left');
+}
+
 function drawHUD() {
-  // topo: menu, pontos, nível e tempo de jogo
+  // topo: menu, pontos, onda/fase e tempo
   panel(8, 6, 40, 36, 12, '#7048e8');
   ctx.fillStyle = '#fff';
   for (let i = 0; i < 3; i++) { roundRect(18, 14 + i * 8, 20, 4, 2); ctx.fill(); ink(1.5); }
@@ -2440,21 +2651,25 @@ function drawHUD() {
   text('★', 72, 24, 14, '#fff3bf');
   fitText(fmt(g.score), 90, 24, 98, 19, '#ffe066', 'left');
   panel(200, 4, 108, 40, 14, '#7048e8');
-  fitText('Nível ' + Math.floor(diff()), 254, 24, 96, 19, '#fff');
+  fitText(g.campaign ? 'Fase ' + g.campaign : 'Onda ' + g.waves, 254, 24, 96, 19, '#fff');
   panel(314, 6, 128, 36, 14, '#27407a');
-  fitText('⏱ ' + fmtTime(g.t), 378, 24, 112, 19, '#a5d8ff');
+  if (g.campaign) {
+    const left = stageLen(g.campaign) - g.t;
+    fitText(left > 0 ? '👑 em ' + fmtTime(left) : '👑 Chefe!', 378, 24, 112, 17, left > 0 ? '#a5d8ff' : '#ffd43b');
+  } else {
+    fitText('⏱ ' + fmtTime(g.t), 378, 24, 112, 19, '#a5d8ff');
+  }
 
-  // barra inferior
+  // barra inferior: arma, multiplicadores e peças
   roundRect(-4, H - 66, W + 8, 72, 16);
   ctx.fillStyle = '#1e2f5c';
   ctx.fill();
   ink(3);
   const w = WEAPONS[g.weapon];
-  fitText('🔫 ' + w.name + (g.locked ? ' 🔒' : ''), 12, H - 50, LOCK_BTN.x - 22, 17, shade(bulletColor(w), 0.2), 'left');
-  fitText(`Dano ×${fmtMul(g.dmgMul)}  •  Cadência ×${fmtMul(g.rateMul)}`, 12, H - 31, LOCK_BTN.x - 22, 12, '#c5d3ff', 'left');
-  // barra de peças (estilo elixir)
+  fitText('🔫 ' + w.name, 12, H - 50, W / 2 - 10, 17, shade(w.color, 0.2), 'left');
+  fitText(`Dano ×${fmtMul(g.dmgMul)}  •  Cadência ×${fmtMul(g.rateMul)}`, W - 12, H - 50, W / 2 - 20, 12, '#c5d3ff', 'right');
   const need = partsNeed();
-  const bx = 12, by = H - 20, bw = LOCK_BTN.x - 26, bh = 12;
+  const bx = 12, by = H - 26, bw = W - 24, bh = 16;
   bar(bx, by, bw, bh, g.parts / need, '#d63cf0');
   ctx.strokeStyle = 'rgba(0,0,0,.35)';
   ctx.lineWidth = 1.5;
@@ -2464,9 +2679,7 @@ function drawHUD() {
     ctx.lineTo(bx + bw * i / need, by + bh - 2);
     ctx.stroke();
   }
-  text(`🔧 ${g.parts}/${need}`, bx + bw - 4, by - 1, 12, '#f3d9fa', 'right');
-  if (g.locked) uiButton(LOCK_BTN.x, LOCK_BTN.y, LOCK_BTN.w, LOCK_BTN.h, '#51cf66', '#2b8a3e', '🔒 Travada', 17, toggleLock);
-  else uiButton(LOCK_BTN.x, LOCK_BTN.y, LOCK_BTN.w, LOCK_BTN.h, '#ffd43b', '#e8a200', '🔓 Travar', 17, toggleLock);
+  text(`🔧 ${g.parts}/${need} peças para a próxima melhoria`, W / 2, by + bh / 2, 11, '#f3d9fa');
 
   const bo = g.boss;
   if (bo) {
@@ -2496,11 +2709,50 @@ function drawHUD() {
     blob(36, 64, 14, '#ffd43b', 2.5);
     emoji('👑', 36, 65, 13);
     fitText(bo.name + '  ' + pct(bo.hp, bo.maxHp), W / 2, 64, W - 120, 15, '#fff');
-  } else if (g.bossCd < 8) {
+  } else if (g.bossCd < 8 && !(g.campaign && g.t >= stageLen(g.campaign) - 20)) {
     text('Boss chegando em ' + Math.ceil(g.bossCd) + 's', W / 2, 66, 17, '#ff8787');
   }
 
+  drawEscapeWarnings();
+  if (g.toasts.length) drawToast(g.toasts[0]);
   if (g.banner) drawBanner(g.banner);
+  if (g.readyT > 0) {
+    ctx.fillStyle = 'rgba(16, 22, 48, .45)';
+    ctx.fillRect(0, H / 2 - 70, W, 140);
+    text('Prepare-se!', W / 2, H / 2 - 20, 40, '#ffd43b');
+    text(String(Math.ceil(g.readyT)), W / 2, H / 2 + 34, 44, '#fff');
+  }
+}
+
+// marca vermelha nas faixas onde um bicho está prestes a escapar
+function drawEscapeWarnings() {
+  const pulse = 0.6 + 0.4 * Math.sin(g.t * 14);
+  for (const l of escapeLanes(nearestLane(g.x))) {
+    const p = proj(LANES[l], PLAYER_Y + 18);
+    ctx.globalAlpha = pulse;
+    blob(p.x, p.y, 16, '#ff4d4d', 3);
+    text('!', p.x, p.y + 1, 22, '#fff');
+    ctx.beginPath();
+    ctx.moveTo(p.x - 10, p.y + 20); ctx.lineTo(p.x + 10, p.y + 20); ctx.lineTo(p.x, p.y + 32);
+    ctx.closePath();
+    ctx.fillStyle = '#ff4d4d';
+    ctx.fill();
+    ink(2);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// dica/aviso no alto da tela
+function drawToast(t) {
+  ctx.globalAlpha = Math.min(1, t.life * 2, (5 - t.life) * 4 + 0.2);
+  const y = g.boss ? 84 : 52;
+  panel(14, y, W - 28, 62, 14, '#27407a', 3);
+  blob(44, y + 31, 20, '#ffd43b', 2.5);
+  emoji(t.icon, 44, y + 32, 20);
+  fitText(t.title, 74, y + 19, W - 104, 17, '#ffe066', 'left');
+  const lines = wrapLines(t.text, W - 104, 13);
+  lines.slice(0, 2).forEach((ln, i) => text(ln, 74, y + 38 + i * 15, 13, '#fff', 'left'));
+  ctx.globalAlpha = 1;
 }
 
 // faixa (fita) no meio da tela
@@ -2534,40 +2786,53 @@ function drawBanner(bn) {
   ctx.globalAlpha = 1;
 }
 
-// cartas de evolução lado a lado; a cor da moldura indica o nível (raridade)
+// Cartas de melhoria lado a lado: nova arma ou evolução. A cor da moldura da
+// evolução indica o nível (raridade).
 const CARD = i => ({ x: 12 + i * 145, y: 226, w: 136, h: 262 });
 const RARITY = ['#8ea2c4', '#ff9f1c', '#b44cf0', '#20c997', '#ffd43b'];
+
+function cardInfo(k) {
+  if (k === 'weapon') {
+    const cur = WEAPONS[g.weapon], next = WEAPONS[g.weapon + 1];
+    const ratio = weaponDps(next) / weaponDps(cur);
+    return {
+      icon: '🔫', color: next.color, frame: '#4dabf7', pill: 'Arma nova',
+      name: next.name, desc: `Dano/s ${ratio.toFixed(1).replace('.', ',')}× maior. Evoluções continuam.`,
+    };
+  }
+  const P = PERKS[k], lvl = perk(k);
+  return { icon: P.icon, color: P.color, frame: RARITY[Math.min(lvl, RARITY.length - 1)], pill: `Nv ${lvl} → ${lvl + 1}`, name: P.name, desc: P.desc(lvl + 1) };
+}
 
 function drawChoice() {
   ctx.fillStyle = 'rgba(16, 22, 48, .82)';
   ctx.fillRect(0, 0, W, H);
-  text('EVOLUÇÃO!', W / 2, 140, 46, '#ffd43b');
-  fitText(WEAPONS[g.weapon].name + (g.locked ? ' 🔒' : ''), W / 2, 186, W - 40, 20, '#e9ecef');
+  text('MELHORIA!', W / 2, 140, 46, '#ffd43b');
+  fitText('Arma atual: ' + WEAPONS[g.weapon].name, W / 2, 186, W - 40, 18, '#e9ecef');
   g.choice.options.forEach((k, i) => {
-    const P = PERKS[k], c = CARD(i), lvl = perk(k);
-    const rar = RARITY[Math.min(lvl, RARITY.length - 1)];
+    const c = CARD(i), I = cardInfo(k);
     roundRect(c.x, c.y + 5, c.w, c.h, 14);
-    ctx.fillStyle = shade(rar, -0.4);
+    ctx.fillStyle = shade(I.frame, -0.4);
     ctx.fill();
     ink(3);
     roundRect(c.x, c.y, c.w, c.h, 14);
-    ctx.fillStyle = rar;
+    ctx.fillStyle = I.frame;
     ctx.fill();
     ink(3.5);
     roundRect(c.x + 8, c.y + 8, c.w - 16, 104, 10);
     const gr = ctx.createLinearGradient(0, c.y + 8, 0, c.y + 112);
-    gr.addColorStop(0, shade(P.color, 0.25));
-    gr.addColorStop(1, shade(P.color, -0.35));
+    gr.addColorStop(0, shade(I.color, 0.25));
+    gr.addColorStop(1, shade(I.color, -0.35));
     ctx.fillStyle = gr;
     ctx.fill();
     ink(2.5);
-    emoji(P.icon, c.x + c.w / 2, c.y + 60, 52);
-    panel(c.x + c.w / 2 - 40, c.y + 100, 80, 26, 12, '#27407a', 2.5);
-    text(`Nv ${lvl} → ${lvl + 1}`, c.x + c.w / 2, c.y + 113, 14, '#fff');
-    const nameLines = wrapLines(P.name, c.w - 16, 18);
+    emoji(I.icon, c.x + c.w / 2, c.y + 60, 52);
+    panel(c.x + c.w / 2 - 44, c.y + 100, 88, 26, 12, '#27407a', 2.5);
+    fitText(I.pill, c.x + c.w / 2, c.y + 113, 80, 14, '#fff');
+    const nameLines = wrapLines(I.name, c.w - 16, 18);
     nameLines.forEach((ln, j) => text(ln, c.x + c.w / 2, c.y + 146 + j * 21, 18, '#fff'));
     const descTop = c.y + 150 + nameLines.length * 21;
-    wrapLines(P.desc(lvl + 1), c.w - 18, 13).slice(0, 4).forEach((ln, j) =>
+    wrapLines(I.desc, c.w - 18, 13).slice(0, 4).forEach((ln, j) =>
       text(ln, c.x + c.w / 2, descTop + j * 17, 13, '#fff9db'));
     text(String(i + 1), c.x + 16, c.y + 18, 13, 'rgba(255,255,255,.85)');
     uiButtons.push({ ...c, action: () => choosePerk(i) });
@@ -2576,8 +2841,8 @@ function drawChoice() {
 }
 
 function drawTitle(y) {
-  text('SHOOT', W / 2, y, 64, '#ffd43b');
-  text('LINES', W / 2, y + 62, 64, '#ffffff');
+  text('SHOOT', W / 2, y, 60, '#ffd43b');
+  text('LINES', W / 2, y + 58, 60, '#ffffff');
 }
 
 function pulseButton(cx, cy, w, h, top, bottom, label, size, action) {
@@ -2591,45 +2856,92 @@ function pulseButton(cx, cy, w, h, top, bottom, label, size, action) {
 }
 
 function drawMenu() {
+  ensureDaily();
   ctx.fillStyle = 'rgba(16, 22, 48, .55)';
   ctx.fillRect(0, 0, W, H);
-  drawTitle(110);
-  panel(26, 225, W - 52, 296, 18, 'rgba(39, 64, 122, .95)', 3.5);
-  const lines = [
-    ['🛣️', 'Seu esquadrão avança por 3 faixas'],
-    ['🟩', 'Portões verdes: soldados, armas, dano'],
-    ['🟥', 'Evite os vermelhos e os bichos'],
-    ['🏃', 'Bicho que escapa também tira soldados'],
-    ['🎖️', '300 soldados = sobe de patente (I a V)'],
-    ['🔧', 'Junte peças para trocar ou evoluir a arma'],
-    ['🔒', 'Trave a arma para ganhar evoluções'],
-    ['👆', '← → / A D ou toque na faixa  •  L trava'],
-  ];
-  lines.forEach(([ic, ln], i) => {
-    emoji(ic, 50, 252 + i * 34, 17);
-    fitText(ln, 70, 252 + i * 34, W - 110, 15, '#fff', 'left');
-  });
+  coinPill(W - 132, 10);
+  drawTitle(78);
+  let y = 200;
+  const totalStars = Object.values(meta.stars).reduce((a, b) => a + b, 0);
+  pulseButton(W / 2, y + 30, W - 70, 60, '#51cf66', '#2b8a3e', `CAMPANHA · Fase ${meta.stage}`, 22, () => startCampaign(meta.stage));
+  text(`★ ${totalStars} estrelas  •  fases de ${fmtTime(stageLen(meta.stage))} + chefe`, W / 2, y + 74, 13, '#d3f9d8');
+  y += 92;
+  uiButton(35, y, W - 70, 50, '#ffd43b', '#e8a200', 'INFINITO', 22, start);
+  if (meta.best) text('🏆 Recorde: ' + fmt(meta.best), W / 2, y + 66, 13, '#ffe066');
+  y += 82;
   const save = loadSave();
   if (save) {
-    pulseButton(W / 2, 572, 250, 58, '#51cf66', '#2b8a3e', 'CONTINUAR', 26, continueGame);
-    fitText(`${MODES[save.mode ?? 1].name}  •  ${rankInfo(save.tier).name}  •  ⏱ ${fmtTime(save.t)}`, W / 2, 618, W - 60, 14, '#d3f9d8');
-    uiButton(W / 2 - 110, 638, 220, 46, '#ffd43b', '#e8a200', 'NOVO JOGO', 21, start);
-  } else {
-    pulseButton(W / 2, 590, 220, 64, '#ffd43b', '#e8a200', 'JOGAR', 32, start);
+    uiButton(35, y, W - 70, 46, '#4dabf7', '#1c7ed6',
+      `CONTINUAR · ${save.campaign ? 'Fase ' + save.campaign : 'Infinito'} · ${fmtTime(save.t)}`, 18, continueGame);
+    y += 60;
   }
-  // dificuldade do novo jogo
-  text('Dificuldade', W / 2, 682, 14, '#c5d3ff');
+  uiButton(35, y, W - 70, 46, '#be4bdb', '#862e9c', '🛒 LOJA', 20, () => { state = 'shop'; });
+  y += 62;
+
+  // missões do dia
+  const ml = meta.daily.list;
+  panel(20, y, W - 40, 30 + ml.length * 38, 16, 'rgba(39, 64, 122, .95)', 3);
+  text('Missões de hoje', 36, y + 18, 15, '#ffd43b', 'left');
+  ml.forEach((m, i) => {
+    const M = MISSIONS.find(x => x.id === m.id);
+    const yy = y + 36 + i * 38;
+    fitText((m.done ? '✅ ' : '') + M.text(m.goal), 36, yy + 6, W - 170, 13, m.done ? '#8ce99a' : '#fff', 'left');
+    bar(36, yy + 16, W - 170, 10, m.prog / m.goal, m.done ? '#51cf66' : '#ffd43b');
+    text(`+${M.reward} $`, W - 40, yy + 12, 14, '#ffe066', 'right');
+  });
+  y += 42 + ml.length * 38;
+
+  // dificuldade
+  text('Dificuldade', W / 2, y, 13, '#c5d3ff');
   MODES.forEach((m, i) => {
     const sel = i === modePref;
-    const x = 30 + i * 132, y = 700;
-    if (sel) uiButton(x, y - 4, 126, 38, m.color, m.dark, m.name, 17, () => {});
-    else uiButton(x, y, 126, 34, '#3b4a7a', '#26315a', m.name, 15, () => {
+    const x = 30 + i * 132;
+    if (sel) uiButton(x, y + 12, 126, 34, m.color, m.dark, m.name, 16, () => {});
+    else uiButton(x, y + 14, 126, 30, '#3b4a7a', '#26315a', m.name, 14, () => {
       modePref = i;
       try { localStorage.setItem('shootlines-mode', String(i)); } catch (e) { /* sem storage */ }
     });
   });
-  if (best) text('🏆 Recorde: ' + fmt(best), W / 2, 760, 16, '#ffe066');
-  text('versão ' + VERSION, W / 2, 786, 11, '#c5d3ff');
+  text('versão ' + VERSION, W / 2, 788, 11, '#c5d3ff');
+}
+
+function drawShop() {
+  ctx.fillStyle = 'rgba(16, 22, 48, .88)';
+  ctx.fillRect(0, 0, W, H);
+  text('LOJA', 26, 30, 34, '#ffd43b', 'left');
+  coinPill(W - 132, 12);
+  UPGRADES.forEach((U, i) => {
+    const y = 64 + i * 68;
+    const l = upLevel(U.key), maxed = l >= U.max;
+    panel(14, y, W - 28, 60, 14, '#27407a', 3);
+    blob(42, y + 30, 19, '#ffd43b', 2.5);
+    emoji(U.icon, 42, y + 31, 19);
+    fitText(`${U.name}  ${l}/${U.max}`, 70, y + 19, W - 210, 16, '#fff', 'left');
+    fitText(maxed ? U.desc(l) : 'Próximo: ' + U.desc(l + 1), 70, y + 41, W - 210, 12, '#c5d3ff', 'left');
+    const cost = U.cost(l), can = !maxed && meta.coins >= cost;
+    uiButton(W - 126, y + 11, 100, 36, maxed ? '#868e96' : can ? '#51cf66' : '#5c6b8a', maxed ? '#495057' : can ? '#2b8a3e' : '#3b4a6a',
+      maxed ? 'MÁX' : '$ ' + fmt(cost), 16, () => buyUpgrade(U.key));
+  });
+  // visuais da munição
+  const sy = 64 + UPGRADES.length * 68 + 6;
+  text('Visual da munição', 26, sy + 10, 16, '#ffd43b', 'left');
+  const bw = (W - 28 - 4 * 8) / 5;
+  SKINS.forEach((S, i) => {
+    const x = 14 + i * (bw + 8), y = sy + 24;
+    const own = meta.skins.includes(S.key), sel = meta.skin === S.key;
+    panel(x, y, bw, 92, 12, sel ? '#2f9e44' : '#27407a', sel ? 3.5 : 2.5);
+    const col = S.color === 'rainbow' ? `hsl(${Math.floor(performance.now() / 8) % 360}, 90%, 60%)` : S.color || '#ffe066';
+    for (let k = 0; k < 3; k++) {
+      roundRect(x + bw / 2 - 14 + k * 11, y + 14, 5, 22, 2);
+      ctx.fillStyle = col;
+      ctx.fill();
+      ink(1.5);
+    }
+    fitText(S.name, x + bw / 2, y + 52, bw - 8, 13, '#fff');
+    fitText(sel ? 'Usando' : own ? 'Usar' : '$ ' + S.cost, x + bw / 2, y + 74, bw - 8, 13, sel ? '#d3f9d8' : own ? '#a5d8ff' : '#ffe066');
+    uiButtons.push({ x, y, w: bw, h: 92, action: () => buySkin(S.key) });
+  });
+  uiButton(W / 2 - 100, H - 70, 200, 48, '#868e96', '#495057', 'VOLTAR', 20, () => { state = 'menu'; });
 }
 
 // Menu de pausa: situação do esquadrão, evoluções, habilidades e ameaças.
@@ -2647,22 +2959,20 @@ function drawPauseMenu() {
   bar(30, 118, W - 60, 16, g.soldiers / PROMOTE_AT, r.color);
   fitText(`${fmt(g.soldiers)} / ${PROMOTE_AT} soldados → ${rankInfo(g.tier + 1).name}`, W / 2, 146, W - 60, 13, '#fff');
   const w = WEAPONS[g.weapon];
-  fitText('🔫 ' + w.name + (g.locked ? ' 🔒' : '') + `   🔧 ${g.parts}/${partsNeed()}`, 30, 172, W - 60, 16, shade(bulletColor(w), 0.2), 'left');
+  fitText('🔫 ' + w.name + `   🔧 ${g.parts}/${partsNeed()}`, 30, 172, W - 60, 16, shade(w.color, 0.2), 'left');
   fitText(`Dano ×${fmtMul(g.dmgMul)}  •  Cadência ×${fmtMul(g.rateMul)}  •  Poder ${fmt(dps())}/s`, 30, 196, W - 60, 13, '#c5d3ff', 'left');
-  fitText(`${mode().name}  •  📏 ${fmt(g.dist)} m  •  👑 ${g.bossesKilled} bosses  •  ⭐ ${fmt(g.score)}`, 30, 220, W - 60, 13, '#c5d3ff', 'left');
+  fitText(`${mode().name}  •  ${g.campaign ? 'Fase ' + g.campaign : 'Infinito'}  •  👑 ${g.bossesKilled} bosses  •  ⭐ ${fmt(g.score)}`, 30, 220, W - 60, 13, '#c5d3ff', 'left');
 
-  // evoluções
+  // evoluções e combos
   panel(16, 254, W - 32, 128, 16, '#27407a', 3);
-  text('Evoluções da arma', 30, 274, 15, '#ffd43b', 'left');
-  const perks = Object.keys(g.perks);
-  if (!perks.length) {
-    fitText('Trave a arma 🔒 e junte peças 🔧 para evoluir', W / 2, 322, W - 70, 14, '#c5d3ff');
-  }
-  perks.forEach((k, i) => {
+  text('Evoluções', 30, 274, 15, '#ffd43b', 'left');
+  const items = Object.keys(g.perks).map(k => ({ icon: PERKS[k].icon, color: PERKS[k].color, label: 'Nv' + g.perks[k], info: { icon: PERKS[k].icon, name: `${PERKS[k].name} (nível ${g.perks[k]})`, desc: PERKS[k].desc(g.perks[k]) } }))
+    .concat(COMBOS.filter(c => combo(c.key)).map(c => ({ icon: c.icon, color: '#ffd43b', label: 'Combo', info: { icon: c.icon, name: 'Combo: ' + c.name, desc: c.desc } })));
+  if (!items.length) fitText('Junte peças 🔧 para ganhar evoluções', W / 2, 322, W - 70, 14, '#c5d3ff');
+  items.slice(0, 10).forEach((it, i) => {
     const x = 28 + (i % 5) * 80, y = 290 + Math.floor(i / 5) * 44;
-    const P = PERKS[k];
-    badge(x, y, 72, 38, P.color, P.icon, 'Nv' + g.perks[k], '#fff');
-    uiButtons.push({ x, y, w: 72, h: 38, action: () => { g.info = { icon: P.icon, name: `${P.name} (nível ${g.perks[k]})`, desc: P.desc(g.perks[k]) }; } });
+    badge(x, y, 72, 38, it.color, it.icon, it.label, '#fff');
+    uiButtons.push({ x, y, w: 72, h: 38, action: () => { g.info = it.info; } });
   });
 
   // habilidades de patente
@@ -2701,7 +3011,7 @@ function drawPauseMenu() {
   }
 
   uiButton(20, 640, 200, 54, '#ffd43b', '#e8a200', 'CONTINUAR', 22, resume);
-  uiButton(230, 640, 200, 54, '#ff6b6b', '#c92a2a', 'NOVO JOGO', 22, start);
+  uiButton(230, 640, 200, 54, '#ff6b6b', '#c92a2a', 'RECOMEÇAR', 22, restart);
   uiButton(20, 708, 200, 40, '#4dabf7', '#1c7ed6', muted ? '🔇 Som: off' : '🔊 Som: on', 17, () => { muted = !muted; });
   uiButton(230, 708, 200, 40, '#868e96', '#495057', '🏠 Menu inicial', 17, toMenu);
 }
@@ -2709,29 +3019,65 @@ function drawPauseMenu() {
 function drawGameOver() {
   ctx.fillStyle = 'rgba(16, 22, 48, .78)';
   ctx.fillRect(0, 0, W, H);
-  panel(30, 190, W - 60, 300, 18, 'rgba(39, 64, 122, .97)', 3.5);
-  text('FIM DE JOGO', W / 2, 190, 40, '#ff8787');
+  panel(30, 170, W - 60, 340, 18, 'rgba(39, 64, 122, .97)', 3.5);
+  text(g.campaign ? `FASE ${g.campaign} FALHOU` : 'FIM DE JOGO', W / 2, 170, 38, '#ff8787');
   [
     '⭐ Pontuação: ' + fmt(g.score),
     '⏱ Tempo: ' + fmtTime(g.t) + '   📏 ' + fmt(g.dist) + ' m',
     '🎖️ ' + rankInfo(g.tier).name + '  •  ' + mode().name,
     '👑 Bosses derrotados: ' + g.bossesKilled,
-    '🏆 Recorde: ' + fmt(best),
-  ].forEach((l, i) => fitText(l, W / 2, 252 + i * 44, W - 100, 19, '#fff'));
+    g.campaign ? '🗺️ Chefe em ' + fmtTime(Math.max(0, stageLen(g.campaign) - g.t)) : '🏆 Recorde: ' + fmt(meta.best),
+  ].forEach((l, i) => fitText(l, W / 2, 228 + i * 42, W - 100, 19, '#fff'));
+  panel(W / 2 - 95, 448, 190, 40, 14, '#3a3214', 2.5);
+  text(`+${fmt(g.coinsEarned)} moedas`, W / 2, 468, 20, '#ffe066');
   if (g.overT > 0.8) {
-    pulseButton(W / 2, 560, 250, 60, '#ffd43b', '#e8a200', 'JOGAR DE NOVO', 24, start);
-    uiButton(W / 2 - 100, 616, 200, 44, '#868e96', '#495057', '🏠 Menu inicial', 17, toMenu);
+    pulseButton(W / 2, 560, 250, 60, '#ffd43b', '#e8a200', 'JOGAR DE NOVO', 24, restart);
+    uiButton(W / 2 - 100, 616, 200, 44, '#be4bdb', '#862e9c', '🛒 Loja', 17, () => { state = 'shop'; });
+    uiButton(W / 2 - 100, 672, 200, 44, '#868e96', '#495057', '🏠 Menu inicial', 17, toMenu);
+  }
+}
+
+function drawClear() {
+  ctx.fillStyle = 'rgba(16, 22, 48, .78)';
+  ctx.fillRect(0, 0, W, H);
+  panel(30, 170, W - 60, 330, 18, 'rgba(39, 64, 122, .97)', 3.5);
+  text(`FASE ${g.campaign} COMPLETA!`, W / 2, 170, 34, '#8ce99a');
+  for (let i = 0; i < 3; i++) {
+    const on = i < g.stars;
+    const sx = W / 2 + (i - 1) * 78, sy = 250 - (i === 1 ? 10 : 0);
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const rr = k % 2 ? 14 : 32, a = -Math.PI / 2 + k * Math.PI / 5;
+      ctx.lineTo(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+    ctx.fillStyle = on ? '#ffd43b' : '#3b4a7a';
+    ctx.fill();
+    ink(3);
+  }
+  fitText('Estrelas: chegar ao fim com 40% e 75% da força máxima', W / 2, 300, W - 100, 12, '#c5d3ff');
+  [
+    '⏱ ' + fmtTime(g.t) + '   •   👑 ' + g.bossesKilled + ' bosses',
+    '🎖️ ' + rankInfo(g.tier).name,
+  ].forEach((l, i) => fitText(l, W / 2, 338 + i * 38, W - 100, 18, '#fff'));
+  panel(W / 2 - 95, 420, 190, 40, 14, '#3a3214', 2.5);
+  text(`+${fmt(g.coinsEarned)} moedas`, W / 2, 440, 20, '#ffe066');
+  if (g.overT > 0.8) {
+    pulseButton(W / 2, 560, 260, 60, '#51cf66', '#2b8a3e', 'PRÓXIMA FASE', 24, () => startCampaign(g.campaign + 1));
+    uiButton(W / 2 - 100, 616, 200, 44, '#be4bdb', '#862e9c', '🛒 Loja', 17, () => { state = 'shop'; });
+    uiButton(W / 2 - 100, 672, 200, 44, '#868e96', '#495057', '🏠 Menu inicial', 17, () => { state = 'menu'; });
   }
 }
 
 function draw() {
   uiButtons = [];
+  const inGame = g && state !== 'menu' && state !== 'shop';
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.save();
-  if (g && g.shake > 0) ctx.translate(rand(-g.shake, g.shake) * 0.5, rand(-g.shake, g.shake) * 0.5);
-  drawGround(g && state !== 'menu' ? g.scroll : (performance.now() / 8) % 2400);
+  if (inGame && g.shake > 0) ctx.translate(rand(-g.shake, g.shake) * 0.5, rand(-g.shake, g.shake) * 0.5);
+  drawGround(inGame ? g.scroll : (performance.now() / 8) % 2400);
 
-  if (g && state !== 'menu') {
+  if (inGame) {
     drawTelegraph();
     // desenha de longe para perto
     const items = [];
@@ -2755,7 +3101,7 @@ function draw() {
     ctx.globalAlpha = 1;
   }
   drawFog();
-  if (g && state !== 'menu') {
+  if (inGame) {
     drawPlanes();
     for (const t of g.texts) {
       const q = proj(t.x, t.y);
@@ -2766,21 +3112,23 @@ function draw() {
   }
   ctx.restore();
 
-  if (g && g.flash > 0 && state !== 'menu') {
+  if (inGame && g.flash > 0) {
     ctx.globalAlpha = g.flash * 0.6;
     ctx.fillStyle = g.flashColor;
     ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = 1;
   }
 
-  if (g && state !== 'menu') drawHUD();
+  if (inGame) drawHUD();
   // nos menus só valem os botões do próprio menu
   if (state !== 'play') uiButtons = [];
 
   if (state === 'menu') drawMenu();
+  else if (state === 'shop') drawShop();
   else if (state === 'paused') drawPauseMenu();
   else if (state === 'choose') drawChoice();
   else if (state === 'over') drawGameOver();
+  else if (state === 'clear') drawClear();
 }
 
 // ---------------------------------------------------------------------------
@@ -2792,7 +3140,7 @@ function frame(now) {
   last = now;
   if (state === 'play') update(dt);
   else if (state === 'choose') g.choice.t += dt;
-  else if (state === 'over' && g) {
+  else if ((state === 'over' || state === 'clear') && g) {
     g.overT += dt;
     for (const p of g.particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
     g.particles = g.particles.filter(p => p.life > 0);
@@ -2805,23 +3153,37 @@ requestAnimationFrame(frame);
 // ---------------------------------------------------------------------------
 // Controles
 // ---------------------------------------------------------------------------
+// modo infinito
 function start() {
   clearSave();
-  newGame();
+  newGame(null);
   state = 'play';
   sfx(440, 0.1, 'triangle', 0.06, 300);
+}
+
+function startCampaign(n) {
+  clearSave();
+  newGame(n);
+  state = 'play';
+  g.banner = { text: 'Fase ' + n, tip: `Sobreviva ${fmtTime(stageLen(n))} e derrote o chefe`, life: 2.6, good: true };
+  sfx(440, 0.1, 'triangle', 0.06, 300);
+}
+
+// recomeça no mesmo modo (fase ou infinito)
+function restart() {
+  if (g && g.campaign) startCampaign(g.campaign);
+  else start();
 }
 
 function continueGame() {
   const o = loadSave();
   if (!o) { start(); return; }
-  newGame();
+  newGame(o.campaign);
   Object.assign(g, o);
-  g.x = LANES[g.lane];
-  g.spawnCd = 2.5;
-  g.gateCd = 2;
+  g.toasts = [];
+  g.texts = [];
+  g.readyT = 2;
   state = 'play';
-  g.banner = { text: 'Partida retomada', tip: 'Prepare-se!', life: 2, good: true };
   sfx(440, 0.1, 'triangle', 0.06, 300);
 }
 
@@ -2837,7 +3199,7 @@ function resume() {
 }
 
 function toMenu() {
-  if (g && state !== 'over') saveGame();
+  if (g && state !== 'over' && state !== 'clear') saveGame();
   state = 'menu';
 }
 
@@ -2851,16 +3213,19 @@ window.addEventListener('keydown', e => {
   if (state === 'play') {
     if (k === 'arrowleft' || k === 'a') g.lane = Math.max(0, g.lane - 1);
     if (k === 'arrowright' || k === 'd') g.lane = Math.min(2, g.lane + 1);
-    if (k === 'l') toggleLock();
   }
   if (state === 'choose' && ['1', '2', '3'].includes(k)) choosePerk(+k - 1);
-  if (k === 'p' || k === 'escape') togglePause();
+  if (k === 'p' || k === 'escape') {
+    if (state === 'shop') state = 'menu';
+    else togglePause();
+  }
   if (k === 'm') muted = !muted;
   if (k === 'enter' || k === ' ') {
     e.preventDefault();
-    if (state === 'menu') loadSave() ? continueGame() : start();
+    if (state === 'menu') loadSave() ? continueGame() : startCampaign(meta.stage);
     else if (state === 'paused') resume();
-    else if (state === 'over' && g.overT > 0.8) start();
+    else if (state === 'over' && g.overT > 0.8) restart();
+    else if (state === 'clear' && g.overT > 0.8) startCampaign(g.campaign + 1);
   }
 });
 

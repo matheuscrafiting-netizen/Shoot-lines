@@ -11,133 +11,142 @@ Ou abra o `index.html` em qualquer navegador (PC ou celular). Não precisa insta
 | Ação | Teclado | Toque / mouse |
 |---|---|---|
 | Trocar de faixa | `←` `→` ou `A` `D` | Toque ou arraste na faixa desejada |
-| Começar / continuar | `Enter` / `Espaço` | Botões **JOGAR**, **CONTINUAR** ou **NOVO JOGO** |
-| Dificuldade (Fácil / Normal / Difícil) | — | Botões no menu inicial (vale para o próximo jogo) |
-| Menu de pausa (status, evoluções, habilidades, ameaças) | `P` / `Esc` | Botão **☰** no canto superior esquerdo |
-| Travar / destravar a arma | `L` | Botão **🔓 Travar** no canto inferior direito |
-| Escolher evolução | `1` `2` `3` | Toque na carta |
-| Som on/off | `M` | — |
+| Jogar / continuar | `Enter` / `Espaço` | Botões **CAMPANHA**, **INFINITO** ou **CONTINUAR** |
+| Escolher melhoria | `1` `2` `3` | Toque na carta |
+| Menu de pausa | `P` / `Esc` | Botão **☰** no canto superior esquerdo |
+| Som on/off | `M` | Botão no menu de pausa |
+
+Na primeira vez que cada coisa aparece (portões, bichos novos, fuga, patente…), uma **dica** surge no alto da tela.
+
+## Modos
+
+- **Campanha**: fases curtas (2:30 na fase 1, +30 s por fase até 5:30). Quando o tempo acaba, surge o **chefe da fase**; derrotá-lo completa a fase e libera a próxima. A fase 1 é leve e cada fase seguinte é 18% mais forte. **Estrelas**: 1 por completar, mais 1 se terminar com 40% da sua força máxima e mais 1 com 75%.
+- **Infinito**: a partida segue até o esquadrão cair; vale o recorde.
+- **Dificuldade** (Fácil ×1,6 / Normal ×2,6 / Difícil ×4,2 na força dos bichos) vale para os dois modos.
+- **Continuar**: a partida é salva sozinha (a cada 5 s, ao pausar e ao sair). Ao continuar, tudo volta como estava — bichos, boss, portões — com 2 s de "Prepare-se".
+
+## Progresso entre partidas
+
+- **Moedas** a cada partida (tempo, bosses, patente, abates; mais no Normal e no Difícil) e bônus ao completar fases.
+- **Loja** de melhorias permanentes:
+
+| Melhoria | Efeito por nível | Máx. |
+|---|---|---|
+| 👥 Recrutas | +3 soldados no começo | 10 |
+| 💪 Treino de tiro | +10% de dano base | 20 |
+| ⚡ Gatilho rápido | +5% de cadência base | 10 |
+| 🔧 Kit inicial | +1 peça no começo | 3 |
+| 🛡️ Escudo inicial | começa com escudo que bloqueia 1 golpe | 1 |
+| 🍀 Sorte | +6% de chance de 2 portões bons | 5 |
+
+- **Visual da munição** (Clássica, Dourada, Plasma, Tóxica, Arco-íris) comprado com moedas.
+- **Missões de hoje**: 3 missões sorteadas por dia (derrotar bosses, eliminar bichos, chegar a uma patente, sobreviver, completar fases, escolher evoluções); cada uma paga moedas ao ser concluída.
 
 ## Mecânicas
 
-- **Portões verdes** (bônus): `+N` soldados, `×2` / `×3` soldados, arma melhor (ou ⭐ Evolução), ⬆ Promover, `+% Dano`, `+% Cadência`.
-- **Portões vermelhos** (penalidade): `-N` soldados, `÷2` soldados, `-% Dano`, `-% Cadência`.
-- **Atire nos portões `+N` / `-N`** para aumentar o valor — dá até para transformar um vermelho em verde. As balas **atravessam** o portão (cada uma conta uma vez) e seguem até os bichos atrás dele.
-- **Baús**: destrua atirando para ganhar peças, soldados ou cadência (as balas também atravessam).
-- **Bichos**: se encostarem no esquadrão, matam soldados. Os que **escapam** por qualquer faixa também tiram soldados (pouco no começo, mais com o tempo) — troque de faixa para limpar todas.
-- **Peças 🔧**: portões de arma, caixas, bosses e inimigos Elite dão peças. A próxima arma custa 2, 3, 4… peças; com a arma travada, cada evolução custa 3 ou mais.
-- **Armas** (em ordem): Pistola → Submetralhadora → Fuzil → Escopeta → Laser (perfura) → Lança-foguetes (dano em área) → Minigun.
-- **Dano e cadência sem limite**: os bônus (+20% dano, +15% cadência) somam para sempre. Acima de 20 tiros/s, a cadência extra vira dano.
+- **Portões verdes** (bônus): `+N` soldados, `×2` / `×3`, 🔧 peça, ⬆ Promover, `+% Dano`, `+% Cadência`. **Vermelhos**: `-N`, `÷2`, `-% Dano`, `-% Cadência`.
+- **Atire nos portões `+N` / `-N`** para aumentar o valor. As balas atravessam o portão e seguem até os bichos.
+- **Baús**: destrua atirando para ganhar peças, soldados ou cadência.
+- **Bichos** que encostam tiram soldados; os que **escapam** pelas outras faixas também. Uma **marca vermelha ❗** aparece na faixa onde um bicho está prestes a escapar.
+- **Pontuação**: distância, abates, bosses e patente, com multiplicador por dificuldade. O topo mostra a **onda** (infinito) ou a **fase** com o tempo até o chefe (campanha).
 
-### Interface
+### Peças, armas e evoluções
 
-- Topo: **☰ menu**, pontos, nível e **⏱ tempo de jogo**.
-- O menu ☰ pausa o jogo e mostra patente (com progresso até a próxima), arma, multiplicadores, evoluções, habilidades da patente e ameaças — toque num ícone para ler o que ele faz. Dali dá para continuar, começar um novo jogo, ligar/desligar o som ou voltar ao menu inicial.
-- **A partida é salva sozinha** (a cada 5 s, ao pausar e ao sair do app). No menu inicial, **CONTINUAR** retoma de onde parou.
-- Números grandes usam a escala de jogo: 12.3K, 4.5M, 6.7B, 8.9T, depois **aa, ab, ac… zz**. A vida de baús e bosses aparece em **%**.
+Portões de peça, baús, bosses e inimigos Elite dão **peças 🔧**. Ao completar as peças, o jogo pausa e você escolhe 1 de 3 cartas: a **próxima arma** ou uma **evolução**. As evoluções são do esquadrão: **continuam ao trocar de arma**. Cada evolução vai até o nível 5 e cada nível dá +10% de dano.
+
+**Armas** (dano/s por soldado): Pistola 2,5 → Submetralhadora 6 → Fuzil 11 → Escopeta 14 → Laser 24 (atravessa) → Lança-foguetes 20 (explosão) → Minigun 40.
+
+| Evolução | Efeito |
+|---|---|
+| 💥 Munição explosiva | Tiros explodem em área |
+| 🏹 Transposição | Tiro atravessa inimigos |
+| 🌀 Direção aleatória | Balas extras em ângulos aleatórios |
+| 🔁 Ricochete | Tiro quica para o inimigo mais próximo |
+| 🔥 Incendiária | Inimigos pegam fogo |
+| ❄️ Congelante | Inimigos mais lentos |
+| 🎯 Crítico | Chance de dano ×3 |
+| ⚡ Raio em cadeia | Raio salta entre inimigos |
+| 🧭 Teleguiada | Balas fazem curva até os inimigos |
+| 🎖️ Recrutamento | Abates podem recrutar soldados |
+
+**Combos**: duas evoluções no nível 3 ou mais destravam um efeito extra.
+
+| Combo | Precisa de | Efeito |
+|---|---|---|
+| 🌋 Napalm | Incendiária + Munição explosiva | As explosões também incendeiam |
+| 🌨️ Nevasca elétrica | Congelante + Raio em cadeia | O raio também congela |
+| 🦅 Caçadora | Transposição + Teleguiada | Balas teleguiadas atravessam +2 bichos |
+| 🥈 Bala de prata | Crítico + Ricochete | Todo ricochete acerta crítico |
+
+Dano e cadência não têm limite: os bônus dos portões somam para sempre; acima de 12 rajadas/s a cadência extra vira dano.
 
 ### Patentes
 
-Recruta → Soldado → Cabo → Sargento → Tenente → Capitão → Major → Coronel → General, cada uma com os subníveis **I, II, III, IV e V** (depois de General V: General ★1, ★2…).
-
-- Ao chegar a **300 soldados**, o esquadrão sobe um subnível sozinho: a quantidade é **dividida por 3**, mas cada soldado vale **3×** (mesma força). Assim os portões `+N` e `×2` continuam fazendo diferença a partida inteira. Os soldados crescem e mudam de cor a cada patente.
-- O portão **⬆ Promover** sobe um subnível na hora: divide por 2,5 e cada soldado vale 3× (**+20% de força**).
-- O dano dos bichos é medido em "força", então a patente em si não deixa o esquadrão mais resistente — quem protege são as habilidades abaixo.
+Recruta → Soldado → Cabo → Sargento → Tenente → Capitão → Major → Coronel → General, cada uma com os subníveis **I, II e III** (depois de General III: General ★1, ★2…). A cada **300 soldados** o esquadrão sobe um subnível: a quantidade é dividida por 3 e cada soldado vale 3×. O portão **⬆ Promover** sobe na hora com +20% de força.
 
 Cada patente (no subnível I) libera uma habilidade (elas acumulam):
 
 | Patente | Habilidade |
 |---|---|
 | Soldado | 💪 Treinamento: +15% de dano |
-| Cabo | 🛡️ Escudo: bloqueia 1 golpe (bicho ou boss) a cada 12 s |
-| Sargento | 💣 Granada: a cada 6 s no inimigo mais forte da sua faixa (atravessa escudos) |
+| Cabo | 🛡️ Escudo: bloqueia 1 golpe a cada 12 s |
+| Sargento | 💣 Granada a cada 6 s no inimigo mais forte da faixa |
 | Tenente | 🦺 Colete: -20% de dano recebido |
-| Capitão | 🔫 Torreta: atira nos bichos das outras faixas |
+| Capitão | 🔫 Torreta: atira nas outras faixas |
 | Major | ⚕️ Médico: +5% de soldados a cada 8 s |
-| Coronel | ✈️ Ataque aéreo: bombardeia a tela toda a cada 15 s |
+| Coronel | ✈️ Ataque aéreo a cada 15 s |
 | General | ⭐ Comando: habilidades 2× mais rápidas |
 
-### General: ameaças permanentes
+**A partir de General**: uma **ameaça permanente** ao chegar e outra a cada boss derrotado (👥 Horda, 🪨 Couraça, 😡 Fúria, 💨 Pressa, 👑 Elites, 💀 Senhor da guerra), e bosses a cada 45 s.
 
-Ao chegar em **General I** surge a primeira **ameaça permanente**, e a partir daí cada boss derrotado traz mais uma (os bosses passam a vir a cada 45 s). Elas acumulam até o fim da partida:
+### Dificuldade
 
-| Ameaça | Efeito |
-|---|---|
-| 👥 Horda | +25% de inimigos por onda |
-| 🪨 Couraça | Inimigos com +40% de vida |
-| 😡 Fúria | Inimigos causam +40% de dano |
-| 💨 Pressa | Inimigos 10% mais rápidos |
-| 👑 Elites | Mais inimigos com habilidades |
-| 💀 Senhor da guerra | Bosses com +50% de vida e mais agressivos |
+- A força dos bichos depende só do tempo de jogo, do modo e da fase, seguindo uma curva fixa calibrada no crescimento de um esquadrão médio.
+- **Pressão mínima**: a partir dos 3 minutos os bichos sempre exigem uma parte do seu tempo de tiro e encostar sempre custa parte da força, por mais forte que você esteja.
 
-### Arma travada e evoluções
-
-Toque em **🔓 Travar** (ou `L`) para ficar com a arma atual. Com a arma travada — ou na Minigun, a última — as peças 🔧 viram **⭐ Evolução**: o jogo pausa e você escolhe 1 de 3 melhorias. Cada evolução tem até 5 níveis, muda a cor/efeito dos tiros e cada nível dá +10% de dano. Se você destravar e pegar outra arma, as evoluções são perdidas.
-
-| Evolução | Efeito |
-|---|---|
-| 💥 Munição explosiva | Tiros explodem em área (onda laranja) |
-| 🏹 Transposição | Tiro atravessa inimigos |
-| 🌀 Direção aleatória | Balas extras em ângulos aleatórios, acertam outras faixas |
-| 🔁 Ricochete | Tiro quica para o inimigo mais próximo |
-| 🔥 Incendiária | Inimigos pegam fogo e levam dano contínuo |
-| ❄️ Congelante | Inimigos ficam azulados e mais lentos |
-| 🎯 Crítico | Chance de dano ×3 |
-| ⚡ Raio em cadeia | Raio salta entre inimigos próximos |
-| 🧭 Teleguiada | Balas fazem curva até os inimigos |
-| 🎖️ Recrutamento | Abates podem recrutar soldados |
-
-- **Dificuldade igual em toda partida**: a força dos bichos depende só do tempo de jogo (e do modo escolhido), seguindo uma curva fixa calibrada no crescimento de um esquadrão médio. Os modos multiplicam essa curva: **Fácil** ×1,6, **Normal** ×2,6 e **Difícil** ×4,2.
-- **Pressão mínima no meio e no fim**: a partir dos 3 minutos os bichos sempre exigem uma parte do **seu** tempo de tiro, por mais forte que você esteja (25% aos 8 min, +25% a cada 10 min; ×1,25 no Normal e ×1,5 no Difícil), e encostar sempre custa pelo menos uma parte da sua força. Assim eles não evaporam antes de aparecer quando o dano das armas dispara, e mesmo um esquadrão gigante encontra o fim (no Difícil, por volta dos 18–20 min).
-
-### Habilidades dos inimigos
-
-Aparecem a partir do nível 2–5 e ficam mais comuns com o tempo:
+### Inimigos
 
 | Habilidade | Efeito | Como lidar |
 |---|---|---|
-| 🛡️ Escudo | Bloqueia os primeiros tiros (contador na bolha) | Explosões, raio em cadeia e granadas atravessam |
-| 💨 Investida | Dispara em alta velocidade quando chega perto | Mate antes ou saia da faixa |
-| 👻 Fantasma | Fica transparente e intangível de tempos em tempos | Atire quando estiver sólido |
-| 👑 Elite | Maior, 4× vida e 2× dano | Derrotar dá uma peça 🔧 |
-| 💚 Regenerador | Recupera vida se ficar 1 s sem levar dano | Fogo 🔥 impede a cura |
+| 🛡️ Escudo | Bloqueia os primeiros tiros | Explosões, raio e granadas atravessam |
+| 💨 Investida | Dispara quando chega perto | Mate antes ou saia da faixa |
+| 👻 Fantasma | Fica intangível de tempos em tempos | Atire quando estiver sólido |
+| 👑 Elite | 4× vida, 2× dano | Derrotar dá uma peça 🔧 |
+| 💚 Regenerador | Se cura se ficar sem levar dano | Fogo impede a cura |
 | 🧬 Divisor | Ao morrer, vira dois menores | Dano em área |
 
-### Inimigos do meio de jogo
+Do meio do jogo em diante: **🛡️ Escudeiro** (escudo frontal que para balas que atravessariam e corta 40% do dano), **💚 Curandeiro** (aura que cura os bichos em volta) e **👄 Guloso** (engole outros bichos e fica com a vida deles).
 
-Começam a aparecer por volta de 3:30, 4:40 e 5:50 de jogo:
+### Bosses
 
-| Inimigo | O que faz | Como lidar |
-|---|---|---|
-| 🛡️ Escudeiro | Escudo-torre na frente: segura as balas que atravessariam (transposição e ricochete param nele) e corta 40% do dano | Explosões, raio, granadas e balas pelas laterais (direção aleatória, teleguiada) |
-| 💚 Curandeiro | Aura verde no chão que cura os bichos em volta (8% da vida por segundo) | Mate-o primeiro; fogo 🔥 reduz a cura a 30% |
-| 👄 Guloso | Engole os bichos que encostam nele e fica com a vida deles, crescendo | Mate-o cedo, antes que ele coma a onda inteira |
-- **Boss épico** a cada 60 segundos. Ele marca em vermelho a faixa que vai atacar: siga-o para acertar e desvie dos ataques.
-  - A vida dele é calculada pelo **seu** poder de fogo quando ele aparece: pelo menos 30 s de tiro direto no 1º boss, +5 s a cada boss (até 80 s), ×1,25 no Normal e ×1,5 no Difícil — com movimento, fases e ataques, as lutas passam fácil de 1 minuto.
-  - Com 75%, 50% e 25% de vida ele liga um **escudo** por 3 s e chama reforços (as fases aparecem marcadas na barra de vida); no fim fica furioso e ataca mais rápido.
-  - **Enquanto ele está vivo, as criaturas ficam enfurecidas** (aura vermelha): mais vida, mais dano, mais velocidade e mais habilidades especiais — e a fúria cresce a cada boss. As ondas não diminuem durante a luta.
-  - Derrotar dá soldados e 2 peças 🔧. Cada boss tem um ataque diferente:
+Um boss a cada 60 s; ele marca em vermelho a faixa que vai atacar.
+
+- O **1º boss** aguenta ~15 s do seu tiro direto e não enfurece ninguém, e as ondas pausam 4 s quando ele entra.
+- Do 2º em diante: 30 s, +5 s por boss (até 80 s); o **chefe da fase** na campanha aguenta 20 s +5 s por fase.
+- Fases de **escudo** em 75%, 50% e 25% de vida, com reforços (marcadas na barra).
+- Do 2º boss em diante, enquanto ele está vivo, as criaturas ficam **enfurecidas** (aura vermelha).
+- O boss avança até a metade da pista; se chegar lá, fica **furioso** e ataca mais rápido.
 
 | Boss | Ataque |
 |---|---|
-| Rei Besouro | Dispara espinhos em uma faixa (duas, nos níveis altos) |
-| Aranha Rainha | Lança teias e chama filhotes que correm até você |
-| Verme Colossal | Vai até a sua faixa e investe para frente |
-| Golem de Lava | Arremessa pedras em duas faixas — dá para destruí-las atirando |
-| Hidra Sombria | Cospe fogo em duas faixas; só uma fica segura |
-
-  Depois do 5º boss o ciclo recomeça, com bosses mais fortes.
+| Rei Besouro | Espinhos em uma faixa (duas, nos níveis altos) |
+| Aranha Rainha | Teias e filhotes |
+| Verme Colossal | Investe na sua faixa |
+| Golem de Lava | Pedras em duas faixas (dá para destruí-las) |
+| Hidra Sombria | Fogo em duas faixas; só uma fica segura |
 
 ## Visual
 
-Estilo cartoon inspirado em jogos mobile como Clash Royale: contorno escuro grosso em tudo, cores vivas, soldados "cabeçudos", arena de grama quadriculada com caminho de pedra, baús de recompensa, botões 3D, barra de peças no estilo "elixir" e cartas de evolução com moldura por raridade. Fonte [Lilita One](https://fonts.google.com/specimen/Lilita+One) (Google Fonts, licença OFL). Nenhuma arte ou marca da Supercell é usada.
+Estilo cartoon inspirado em jogos mobile como Clash Royale: contorno escuro grosso em tudo, cores vivas, soldados "cabeçudos", arena de grama quadriculada com caminho de pedra, baús de recompensa, botões 3D, barra de peças no estilo "elixir" e cartas com moldura por raridade. Fonte [Lilita One](https://fonts.google.com/specimen/Lilita+One) (Google Fonts, licença OFL). Nenhuma arte ou marca da Supercell é usada.
 
-## Publicação
+## Testes e publicação
 
-O workflow `.github/workflows/pages.yml` publica o jogo no GitHub Pages a cada push na branch padrão.
+- `tests/smoke.cjs`: um robô joga partidas aceleradas (campanha, infinito e uma partida sem dano para checar a progressão) e falha se houver erro de JavaScript ou se a progressão quebrar. Rode com `node tests/smoke.cjs` (precisa do pacote `playwright`).
+- `.github/workflows/tests.yml` roda esse teste a cada push.
+- `.github/workflows/pages.yml` publica o jogo no GitHub Pages a cada push na branch padrão.
 
 ## Estrutura
 
 - `index.html` — página e canvas
-- `game.js` — todo o jogo (Canvas 2D com câmera em perspectiva + WebAudio, sem dependências; soldados são pré-desenhados em sprites para ficar leve no celular)
-- `.github/workflows/pages.yml` — publicação automática no GitHub Pages
+- `game.js` — todo o jogo (Canvas 2D com câmera em perspectiva + WebAudio, sem dependências)
+- `tests/smoke.cjs` — teste automático com robô
