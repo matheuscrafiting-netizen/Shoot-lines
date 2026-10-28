@@ -86,6 +86,13 @@ const THREATS = {
 };
 const GENERAL_RANK = 8;
 
+// Enquanto um boss está vivo, as criaturas que surgem ficam enfurecidas; a fúria
+// cresce a cada boss (1º: +30% vida, +15% dano ... até +100% vida, +50% dano)
+const bossRage = () => {
+  const n = g.bossesKilled;
+  return { hp: Math.min(2, 1.3 + 0.1 * n), dmg: Math.min(1.5, 1.15 + 0.05 * n), spd: Math.min(1.25, 1.08 + 0.03 * n), mods: Math.min(0.3, 0.1 + 0.03 * n) };
+};
+
 const ENEMY_TYPES = {
   bug:     { hp: 3,  spd: 0.85, dmg: 1, r: 14, color: '#69db7c', minD: 1 },
   runner:  { hp: 2,  spd: 1.6,  dmg: 1, r: 11, color: '#ffd43b', minD: 1.6 },
@@ -206,9 +213,9 @@ function sfx(freq, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
 // ---------------------------------------------------------------------------
 // Modos de dificuldade: multiplicam a força dos inimigos e o ritmo de crescimento
 const MODES = [
-  { name: 'Fácil',   mult: 0.5, growth: 0.75, color: '#51cf66', dark: '#2b8a3e' },
-  { name: 'Normal',  mult: 1,   growth: 1,    color: '#ffd43b', dark: '#e8a200' },
-  { name: 'Difícil', mult: 1.6, growth: 1.2, color: '#ff6b6b', dark: '#c92a2a' },
+  { name: 'Fácil',   mult: 1.6, growth: 1.2,  boss: 1,    color: '#51cf66', dark: '#2b8a3e' },
+  { name: 'Normal',  mult: 2.6, growth: 1.35, boss: 1.25, color: '#ffd43b', dark: '#e8a200' },
+  { name: 'Difícil', mult: 4.2, growth: 1.5,  boss: 1.5,  color: '#ff6b6b', dark: '#c92a2a' },
 ];
 let modePref = 1;
 try { modePref = clamp(+(localStorage.getItem('shootlines-mode') ?? 1) || 0, 0, 2); } catch (e) { /* sem storage */ }
@@ -433,7 +440,7 @@ function gameOver() {
 // ---------------------------------------------------------------------------
 function pickMod(d) {
   const avail = Object.keys(MODS).filter(k => MODS[k].minD <= d);
-  const chance = clamp((d - 2) * 0.06 + 0.1 * threat('elites'), 0, 0.9);
+  const chance = clamp((d - 2) * 0.06 + 0.1 * threat('elites') + (g.boss ? bossRage().mods : 0), 0, 0.9);
   return avail.length && Math.random() < chance ? pick(avail) : null;
 }
 
@@ -441,15 +448,17 @@ function spawnEnemy(typeKey, lane, y, mod = null, hpMul = 1) {
   const T = ENEMY_TYPES[typeKey];
   const d = diff();
   const elite = mod === 'elite';
-  const hp = Math.ceil(T.hp * enemyScale() * hpMul * (elite ? 4 : 1));
+  const rage = !!g.boss;
+  const R = bossRage();
+  const hp = Math.ceil(T.hp * enemyScale() * hpMul * (elite ? 4 : 1) * (rage ? R.hp : 1));
   const e = {
     id: g.nextId++, type: typeKey, lane, x: LANES[lane], tx: LANES[lane], y,
     hp, maxHp: hp, r: T.r * (elite ? 1.3 : 1), color: T.color,
-    dmg: T.dmg * enemyDmgScale() * (elite ? 2 : 1),
-    spd: T.spd * worldSpeed() * Math.min(2, Math.pow(1.1, threat('haste'))) * rand(0.92, 1.08),
+    dmg: T.dmg * enemyDmgScale() * (elite ? 2 : 1) * (rage ? R.dmg : 1),
+    spd: T.spd * worldSpeed() * Math.min(2, Math.pow(1.1, threat('haste'))) * (rage ? R.spd : 1) * rand(0.92, 1.08),
     switchCd: T.switcher ? rand(1.5, 3) : Infinity,
     wob: Math.random() * 6, hitT: 0, burn: 0, burnDps: 0, slow: 0, slowF: 1,
-    mod, shield: mod === 'shield' ? 3 + Math.floor(d / 2) : 0,
+    mod, rage, shield: mod === 'shield' ? 3 + Math.floor(d / 2) : 0,
     ghostT: rand(0, 2.4), lastHit: 0, dashing: false, child: false,
   };
   g.enemies.push(e);
@@ -519,19 +528,24 @@ function spawnCrate() {
 function spawnBoss() {
   const n = g.bossesKilled;
   const B = BOSSES[n % BOSSES.length];
-  // pelo menos ~10 s (+2 s por boss) de tiro direto, mesmo com esquadrão enorme
-  // entre ~8 s e ~15 s de tiro direto no 1º boss, crescendo a cada boss:
-  // nunca morre na hora e nunca fica impossível
-  // ~10 s do tiro do esquadrão de referência no 1º boss, +1,5 s por boss (até 30 s)
-  const hp = Math.ceil(refDps() * Math.min(30, 10 + 1.5 * n) * B.hp * mode().mult * Math.pow(1.5, threat('warlord')));
+  // Boss épico: aguenta pelo menos 18 s do SEU tiro direto no 1º boss (+3 s
+  // por boss, até 50 s; mais no Normal/Difícil), nunca menos que o esperado
+  // para o esquadrão de referência
+  const warlord = Math.pow(1.5, threat('warlord'));
+  const epic = dps() * Math.min(50, 18 + 3 * n) * mode().boss;
+  const base = refDps() * Math.min(30, 10 + 1.5 * n) * mode().mult;
+  const hp = Math.ceil(Math.max(epic, base) * B.hp * warlord);
   const lane = 1;
   g.boss = {
     kind: B.kind, name: B.name, color: B.color, lane, x: LANES[lane], tx: LANES[lane],
     y: -160, baseY: 150, mode: 'enter', hp, maxHp: hp, moveCd: 3, atkCd: 2.5, summonCd: 4,
-    tele: null, hitT: 0, t: 0, level: n + 1, burn: 0, burnDps: 0, phases: [0.66, 0.33], shieldT: 0,
+    tele: null, hitT: 0, t: 0, level: n + 1, burn: 0, burnDps: 0, phases: [0.75, 0.5, 0.25], shieldT: 0,
   };
-  g.banner = { text: 'BOSS: ' + B.name, tip: B.tip, life: 2.8 };
+  g.banner = { text: 'BOSS: ' + B.name, tip: B.tip + ' As criaturas ficam enfurecidas!', life: 3.2 };
+  g.shake = 14;
+  g.flash = 0.3; g.flashColor = '#ff2222';
   sfx(80, 0.8, 'sawtooth', 0.1, 120);
+  sfx(55, 1.2, 'square', 0.06, -20);
 }
 
 // ---------------------------------------------------------------------------
@@ -851,7 +865,7 @@ function update(dt) {
   if (g.spawnCd <= 0) {
     spawnWave();
     const base = Math.max(0.55, 2.2 - d * 0.22);
-    g.spawnCd = g.boss ? base * 2.2 : base;
+    g.spawnCd = base;   // durante o boss as ondas continuam no mesmo ritmo
   }
   // durante o boss os portões continuam, só que mais espaçados
   g.gateCd -= dt;
@@ -1721,6 +1735,11 @@ function drawEnemy(e) {
       ctx.stroke();
     }
   }
+  if (e.rage) {
+    // aura vermelha pulsante: criatura enfurecida pelo boss
+    ctx.fillStyle = `rgba(255, 50, 50, ${0.25 + 0.15 * Math.sin(g.t * 10 + e.id)})`;
+    circle(0, cy, r * 1.45);
+  }
   if (e.mod === 'elite') {
     ctx.fillStyle = 'rgba(255, 212, 59, .35)';
     circle(0, cy, r * 1.35);
@@ -2365,6 +2384,16 @@ function drawHUD() {
       roundRect(41, 56, (W - 82) * f, 7, 4);
       ctx.fillStyle = 'rgba(255,255,255,.3)';
       ctx.fill();
+    }
+    // marcas das fases de escudo que ainda faltam
+    for (const ph of bo.phases) {
+      const px = 39 + (W - 78) * ph;
+      ctx.beginPath();
+      ctx.moveTo(px, 54); ctx.lineTo(px, 74);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#4dabf7';
+      ctx.stroke();
+      emoji('🛡️', px, 49, 11);
     }
     blob(36, 64, 14, '#ffd43b', 2.5);
     emoji('👑', 36, 65, 13);

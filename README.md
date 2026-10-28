@@ -87,7 +87,7 @@ Toque em **🔓 Travar** (ou `L`) para ficar com a arma atual. Com a arma travad
 | 🧭 Teleguiada | Balas fazem curva até os inimigos |
 | 🎖️ Recrutamento | Abates podem recrutar soldados |
 
-- **Dificuldade igual em toda partida**: a força dos bichos depende só do tempo de jogo (e do modo escolhido), seguindo uma curva fixa calibrada no crescimento de um esquadrão médio — com folga, para quem joga na média conseguir avançar. Quem fica mais forte que a média acha o jogo mais fácil; quem fica para trás sente mais pressão. A partir dos 12 minutos a curva vai acelerando aos poucos, então toda partida termina um dia (nas simulações, no Normal metade das partidas passa dos ~19 min e as melhores chegam perto dos 30). No **Fácil** os bichos têm metade da força e crescem mais devagar; no **Difícil**, 60% a mais e crescem mais rápido.
+- **Dificuldade igual em toda partida**: a força dos bichos depende só do tempo de jogo (e do modo escolhido), seguindo uma curva fixa calibrada no crescimento de um esquadrão médio — com folga, para quem joga na média conseguir avançar. Quem fica mais forte que a média acha o jogo mais fácil; quem fica para trás sente mais pressão. A partir dos 12 minutos a curva vai acelerando aos poucos, então toda partida termina um dia (nas simulações, no Normal metade das partidas passa dos ~19 min e as melhores chegam perto dos 30). Os modos multiplicam a força dos bichos e aceleram o ritmo: **Fácil** ×1,6, **Normal** ×2,6 e **Difícil** ×4,2 (bosses também aguentam mais no Normal e no Difícil).
 
 ### Habilidades dos inimigos
 
@@ -101,7 +101,11 @@ Aparecem a partir do nível 2–5 e ficam mais comuns com o tempo:
 | 👑 Elite | Maior, 4× vida e 2× dano | Derrotar dá uma peça 🔧 |
 | 💚 Regenerador | Recupera vida se ficar 1 s sem levar dano | Fogo 🔥 impede a cura |
 | 🧬 Divisor | Ao morrer, vira dois menores | Dano em área |
-- **Boss** a cada 60 segundos. Ele marca em vermelho a faixa que vai atacar: siga-o para acertar e desvie dos ataques. A vida dele equivale a ~10 s de tiro de um esquadrão médio no 1º boss, +1,5 s a cada boss; com 66% e 33% de vida ele liga um **escudo** por 3 s e chama reforços, e no fim fica furioso (ataca mais rápido). Derrotar dá soldados e 2 peças 🔧. Cada boss tem um ataque diferente:
+- **Boss épico** a cada 60 segundos. Ele marca em vermelho a faixa que vai atacar: siga-o para acertar e desvie dos ataques.
+  - A vida dele é calculada pelo **seu** poder de fogo quando ele aparece: pelo menos 18 s de tiro direto no 1º boss, +3 s a cada boss (até 50 s), mais no Normal e no Difícil — com movimento, fases e ataques, as lutas duram de ~25 s a quase 1 min.
+  - Com 75%, 50% e 25% de vida ele liga um **escudo** por 3 s e chama reforços (as fases aparecem marcadas na barra de vida); no fim fica furioso e ataca mais rápido.
+  - **Enquanto ele está vivo, as criaturas ficam enfurecidas** (aura vermelha): mais vida, mais dano, mais velocidade e mais habilidades especiais — e a fúria cresce a cada boss. As ondas não diminuem durante a luta.
+  - Derrotar dá soldados e 2 peças 🔧. Cada boss tem um ataque diferente:
 
 | Boss | Ataque |
 |---|---|
