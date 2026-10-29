@@ -137,16 +137,24 @@ Um boss a cada 60 s; ele marca em vermelho a faixa que vai atacar.
 
 ## Visual
 
-Estilo cartoon inspirado em jogos mobile como Clash Royale: contorno escuro grosso em tudo, cores vivas, soldados "cabeçudos", arena de grama quadriculada com caminho de pedra, baús de recompensa, botões 3D, barra de peças no estilo "elixir" e cartas com moldura por raridade. Fonte [Lilita One](https://fonts.google.com/specimen/Lilita+One) (Google Fonts, licença OFL). Nenhuma arte ou marca da Supercell é usada.
+Estilo cartoon inspirado em jogos mobile como Clash Royale: contorno escuro grosso em tudo, cores vivas, soldados "cabeçudos", arena de grama quadriculada com caminho de pedra, baús de recompensa, botões 3D, barra de peças no estilo "elixir" e cartas com moldura por raridade. Fonte [Lilita One](https://fonts.google.com/specimen/Lilita+One) (licença OFL), embutida em `fonts/`. Nenhuma arte ou marca da Supercell é usada.
+
+## Monetização
+
+O jogo está pronto para o portal **CrazyGames** (SDK HTML5 v3, em `platform.js`): avisa o portal quando está carregando e jogando, oferece anúncios com recompensa (📺 reviver uma vez por partida, dobrar moedas, trocar cartas) e um anúncio entre partidas no máximo a cada 3 partidas e 3 minutos. Fora do portal os botões de anúncio somem; para testar o fluxo, abra o jogo com `?ads=test`. Passo a passo de publicação em [PUBLICAR.md](PUBLICAR.md); política de privacidade em `privacidade.html`.
 
 ## Testes e publicação
 
 - `tests/smoke.cjs`: um robô joga partidas aceleradas (campanha, infinito e uma partida sem dano para checar a progressão) e falha se houver erro de JavaScript ou se a progressão quebrar. Rode com `node tests/smoke.cjs` (precisa do pacote `playwright`).
-- `.github/workflows/tests.yml` roda esse teste a cada push.
+- `.github/workflows/tests.yml` roda esse teste a cada push e gera o pacote **shoot-lines-crazygames** (em Actions → Artifacts).
+- `tools/build-crazygames.sh` monta o mesmo pacote localmente em `dist/`.
 - `.github/workflows/pages.yml` publica o jogo no GitHub Pages a cada push na branch padrão.
 
 ## Estrutura
 
 - `index.html` — página e canvas
 - `game.js` — todo o jogo (Canvas 2D com câmera em perspectiva + WebAudio, sem dependências)
+- `platform.js` — anúncios e sinais para o portal (CrazyGames)
+- `privacidade.html` — política de privacidade
+- `fonts/` — fonte Lilita One embutida (licença OFL)
 - `tests/smoke.cjs` — teste automático com robô

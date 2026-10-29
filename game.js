@@ -197,7 +197,7 @@ const VERSION = (() => {
 // ---------------------------------------------------------------------------
 let actx = null, muted = false, lastShotSfx = 0;
 function sfx(freq, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
-  if (muted) return;
+  if (muted || Platform.adPlaying) return;
   try {
     if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
     const t = actx.currentTime;
@@ -235,7 +235,7 @@ function newGame(campaign = null) {
     weapon: 0, rateMul: 1 + 0.05 * upLevel('rate'), dmgMul: 1 + 0.1 * upLevel('damage'), fireCd: 0,
     perks: {}, lastPerk: null, pendingEvo: 0, choice: null, parts: 0, threats: {}, saveT: 0,
     skills: { shield: 0, grenade: 2, turret: 0, medic: 8, air: 5 }, shieldUp: upLevel('shield') > 0,
-    campaign, finalSpawned: false, peak: 0, kills: 0, waves: 0, toasts: [], readyT: 0, coinsEarned: 0, stars: 0,
+    campaign, finalSpawned: false, peak: 0, kills: 0, waves: 0, toasts: [], readyT: 0, coinsEarned: 0, coinsCredited: 0, stars: 0, revived: false, doubled: false,
     bullets: [], enemies: [], gates: [], crates: [], projectiles: [],
     particles: [], texts: [], zaps: [], rings: [], grenades: [], planes: [],
     score: 0, dist: 0, lastCritT: 0,
@@ -553,6 +553,36 @@ function computeScore() {
   return Math.round((g.dist * 2 + g.kills * 5 + g.bossesKilled * 500 + g.tier * 100) * [1, 1.5, 2][g.mode]);
 }
 
+// --- recompensas por anúncio (só aparecem quando há anúncios disponíveis)
+// Reviver: uma vez por partida, volta com 30% da força máxima e escudo
+function revive() {
+  g.revived = true;
+  g.soldiers = Math.max(5, Math.ceil(g.peak * 0.3 / tierMul()));
+  g.enemies = [];
+  g.projectiles = [];
+  g.shieldUp = true;
+  g.readyT = 2;
+  g.banner = { text: 'De volta à luta!', tip: 'Você voltou com escudo', life: 2.2, good: true };
+  state = 'play';
+}
+
+function doubleCoins() {
+  g.doubled = true;
+  meta.coins += g.coinsEarned;   // o bônus não entra em coinsCredited (que conta só a base)
+  g.coinsEarned *= 2;
+  saveMeta();
+  sfx(880, 0.15, 'triangle', 0.07, 400);
+}
+
+// troca as 3 cartas de melhoria por outras
+function rerollChoice() {
+  const avail = shuffle(Object.keys(PERKS).filter(k => perk(k) < PERK_MAX && !g.choice.options.includes(k)));
+  const canWeapon = g.weapon < WEAPONS.length - 1;
+  const opts = canWeapon ? ['weapon', ...avail.slice(0, 2)] : avail.slice(0, 3);
+  if (opts.length) g.choice.options = shuffle(opts);
+  g.choice.rerolled = true;
+}
+
 function stageClear() {
   const keep = power() / Math.max(1, g.peak);
   const stars = 1 + (keep >= 0.4 ? 1 : 0) + (keep >= 0.75 ? 1 : 0);
@@ -560,8 +590,10 @@ function stageClear() {
   const n = g.campaign;
   meta.stars[n] = Math.max(meta.stars[n] || 0, stars);
   if (meta.stage === n) meta.stage = n + 1;
-  g.coinsEarned = runCoins() + 25 + 15 * stars + 5 * n;
+  g.coinsEarned = runCoins() - g.coinsCredited + 25 + 15 * stars + 5 * n;
+  g.coinsCredited = runCoins();
   meta.coins += g.coinsEarned;
+  Platform.happy();
   missionAdd('stage', 1);
   missionMax('survive', Math.floor(g.t / 60));
   saveMeta();
@@ -605,7 +637,8 @@ function gameOver() {
   state = 'over';
   g.overT = 0;
   burst(g.x, PLAYER_Y, '#4dabf7', 40, 260);
-  g.coinsEarned = runCoins();
+  g.coinsEarned = Math.max(0, runCoins() - g.coinsCredited);
+  g.coinsCredited += g.coinsEarned;
   meta.coins += g.coinsEarned;
   missionMax('survive', Math.floor(g.t / 60));
   if (!g.campaign && g.score > meta.best) meta.best = g.score;
@@ -1578,6 +1611,7 @@ function updateBoss(dt, myLane) {
     gainParts(2, g.x);
     g.bossesKilled++;
     missionAdd('bosses', 1);
+    Platform.happy();
     const wasFinal = bo.final;
     g.boss = null;
     if (wasFinal) { stageClear(); return; }
@@ -2838,6 +2872,7 @@ function drawChoice() {
     uiButtons.push({ ...c, action: () => choosePerk(i) });
   });
   text('Toque em uma carta (ou 1, 2, 3)', W / 2, 540, 16, '#c5d3ff');
+  if (Platform.adsAvailable && !g.choice.rerolled) adButton(W / 2 - 115, 572, 230, 44, 'Trocar cartas', 18, rerollChoice);
 }
 
 function drawTitle(y) {
@@ -2903,6 +2938,10 @@ function drawMenu() {
     });
   });
   text('versão ' + VERSION, W / 2, 788, 11, '#c5d3ff');
+  if (Platform.externalLinks) {
+    text('Privacidade', W - 20, 788, 11, '#a5d8ff', 'right');
+    uiButtons.push({ x: W - 100, y: 776, w: 90, h: 24, action: () => window.open('privacidade.html', '_blank') });
+  }
 }
 
 function drawShop() {
@@ -3016,35 +3055,65 @@ function drawPauseMenu() {
   uiButton(230, 708, 200, 40, '#868e96', '#495057', '🏠 Menu inicial', 17, toMenu);
 }
 
+// botão de anúncio com recompensa (📺): só aparece com anúncios disponíveis
+function adButton(x, y, w, h, label, size, onReward) {
+  uiButton(x, y, w, h, '#20c997', '#087f5b', '📺 ' + label, size, () => Platform.rewarded(onReward));
+}
+
+function drawAdOverlay() {
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.fillStyle = 'rgba(10, 14, 32, .85)';
+  ctx.fillRect(0, 0, W, H);
+  text('Anúncio…', W / 2, H / 2 - 10, 34, '#fff');
+  text('O jogo continua logo em seguida', W / 2, H / 2 + 30, 15, '#c5d3ff');
+}
+
+// botões de baixo das telas de fim: anúncio entre partidas antes de seguir
+function endButtons(y, mainLabel, mainColor, mainDark, mainAction) {
+  pulseButton(W / 2, y, 260, 58, mainColor, mainDark, mainLabel, 24, () => Platform.betweenRuns(mainAction));
+  uiButton(W / 2 - 160, y + 44, 150, 44, '#be4bdb', '#862e9c', '🛒 Loja', 17, () => Platform.betweenRuns(() => { state = 'shop'; }));
+  uiButton(W / 2 + 10, y + 44, 150, 44, '#868e96', '#495057', '🏠 Menu', 17, () => Platform.betweenRuns(toMenu));
+}
+
+function coinsLine(y) {
+  panel(W / 2 - 95, y, 190, 40, 14, '#3a3214', 2.5);
+  text(`+${fmt(g.coinsEarned)} moedas`, W / 2, y + 20, 20, '#ffe066');
+  if (Platform.adsAvailable && !g.doubled && g.coinsEarned > 0 && g.overT > 0.8) {
+    adButton(W / 2 - 110, y + 50, 220, 40, 'Dobrar moedas', 17, doubleCoins);
+  }
+}
+
 function drawGameOver() {
   ctx.fillStyle = 'rgba(16, 22, 48, .78)';
   ctx.fillRect(0, 0, W, H);
-  panel(30, 170, W - 60, 340, 18, 'rgba(39, 64, 122, .97)', 3.5);
-  text(g.campaign ? `FASE ${g.campaign} FALHOU` : 'FIM DE JOGO', W / 2, 170, 38, '#ff8787');
+  panel(30, 140, W - 60, 380, 18, 'rgba(39, 64, 122, .97)', 3.5);
+  text(g.campaign ? `FASE ${g.campaign} FALHOU` : 'FIM DE JOGO', W / 2, 140, 38, '#ff8787');
   [
     '⭐ Pontuação: ' + fmt(g.score),
     '⏱ Tempo: ' + fmtTime(g.t) + '   📏 ' + fmt(g.dist) + ' m',
     '🎖️ ' + rankInfo(g.tier).name + '  •  ' + mode().name,
     '👑 Bosses derrotados: ' + g.bossesKilled,
     g.campaign ? '🗺️ Chefe em ' + fmtTime(Math.max(0, stageLen(g.campaign) - g.t)) : '🏆 Recorde: ' + fmt(meta.best),
-  ].forEach((l, i) => fitText(l, W / 2, 228 + i * 42, W - 100, 19, '#fff'));
-  panel(W / 2 - 95, 448, 190, 40, 14, '#3a3214', 2.5);
-  text(`+${fmt(g.coinsEarned)} moedas`, W / 2, 468, 20, '#ffe066');
+  ].forEach((l, i) => fitText(l, W / 2, 196 + i * 40, W - 100, 19, '#fff'));
+  coinsLine(410);
   if (g.overT > 0.8) {
-    pulseButton(W / 2, 560, 250, 60, '#ffd43b', '#e8a200', 'JOGAR DE NOVO', 24, restart);
-    uiButton(W / 2 - 100, 616, 200, 44, '#be4bdb', '#862e9c', '🛒 Loja', 17, () => { state = 'shop'; });
-    uiButton(W / 2 - 100, 672, 200, 44, '#868e96', '#495057', '🏠 Menu inicial', 17, toMenu);
+    if (Platform.adsAvailable && !g.revived) {
+      adButton(W / 2 - 130, 536, 260, 52, 'REVIVER', 24, revive);
+      endButtons(632, 'JOGAR DE NOVO', '#ffd43b', '#e8a200', restart);
+    } else {
+      endButtons(600, 'JOGAR DE NOVO', '#ffd43b', '#e8a200', restart);
+    }
   }
 }
 
 function drawClear() {
   ctx.fillStyle = 'rgba(16, 22, 48, .78)';
   ctx.fillRect(0, 0, W, H);
-  panel(30, 170, W - 60, 330, 18, 'rgba(39, 64, 122, .97)', 3.5);
-  text(`FASE ${g.campaign} COMPLETA!`, W / 2, 170, 34, '#8ce99a');
+  panel(30, 150, W - 60, 380, 18, 'rgba(39, 64, 122, .97)', 3.5);
+  text(`FASE ${g.campaign} COMPLETA!`, W / 2, 150, 34, '#8ce99a');
   for (let i = 0; i < 3; i++) {
     const on = i < g.stars;
-    const sx = W / 2 + (i - 1) * 78, sy = 250 - (i === 1 ? 10 : 0);
+    const sx = W / 2 + (i - 1) * 78, sy = 230 - (i === 1 ? 10 : 0);
     ctx.beginPath();
     for (let k = 0; k < 10; k++) {
       const rr = k % 2 ? 14 : 32, a = -Math.PI / 2 + k * Math.PI / 5;
@@ -3055,18 +3124,13 @@ function drawClear() {
     ctx.fill();
     ink(3);
   }
-  fitText('Estrelas: chegar ao fim com 40% e 75% da força máxima', W / 2, 300, W - 100, 12, '#c5d3ff');
+  fitText('Estrelas: chegar ao fim com 40% e 75% da força máxima', W / 2, 280, W - 100, 12, '#c5d3ff');
   [
     '⏱ ' + fmtTime(g.t) + '   •   👑 ' + g.bossesKilled + ' bosses',
     '🎖️ ' + rankInfo(g.tier).name,
-  ].forEach((l, i) => fitText(l, W / 2, 338 + i * 38, W - 100, 18, '#fff'));
-  panel(W / 2 - 95, 420, 190, 40, 14, '#3a3214', 2.5);
-  text(`+${fmt(g.coinsEarned)} moedas`, W / 2, 440, 20, '#ffe066');
-  if (g.overT > 0.8) {
-    pulseButton(W / 2, 560, 260, 60, '#51cf66', '#2b8a3e', 'PRÓXIMA FASE', 24, () => startCampaign(g.campaign + 1));
-    uiButton(W / 2 - 100, 616, 200, 44, '#be4bdb', '#862e9c', '🛒 Loja', 17, () => { state = 'shop'; });
-    uiButton(W / 2 - 100, 672, 200, 44, '#868e96', '#495057', '🏠 Menu inicial', 17, () => { state = 'menu'; });
-  }
+  ].forEach((l, i) => fitText(l, W / 2, 318 + i * 38, W - 100, 18, '#fff'));
+  coinsLine(410);
+  if (g.overT > 0.8) endButtons(600, 'PRÓXIMA FASE', '#51cf66', '#2b8a3e', () => startCampaign(g.campaign + 1));
 }
 
 function draw() {
@@ -3138,6 +3202,13 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
+  Platform.gameplay(state === 'play' && !Platform.adPlaying);
+  if (Platform.adPlaying) {
+    draw();
+    drawAdOverlay();
+    requestAnimationFrame(frame);
+    return;
+  }
   if (state === 'play') update(dt);
   else if (state === 'choose') g.choice.t += dt;
   else if ((state === 'over' || state === 'clear') && g) {
@@ -3149,6 +3220,12 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+Platform.init().then(() => {
+  Platform.loading(true);
+  const done = () => Platform.loading(false);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(done, done);
+  else done();
+});
 
 // ---------------------------------------------------------------------------
 // Controles

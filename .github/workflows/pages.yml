@@ -26,11 +26,13 @@ jobs:
       - uses: actions/configure-pages@v5
       - name: Montar site
         run: |
-          mkdir _site
-          cp index.html game.js _site/
-          # muda o endereço do script a cada versão para o navegador não usar o antigo do cache
-          sed -i "s|src=\"game.js\"|src=\"game.js?v=${GITHUB_SHA::7}\"|" _site/index.html
+          mkdir -p _site/fonts
+          cp index.html game.js platform.js privacidade.html _site/
+          cp fonts/* _site/fonts/
+          # muda o endereço dos scripts a cada versão para o navegador não usar o antigo do cache
+          sed -i "s|src=\"game.js\"|src=\"game.js?v=${GITHUB_SHA::7}\"|; s|src=\"platform.js\"|src=\"platform.js?v=${GITHUB_SHA::7}\"|" _site/index.html
           grep -q "game.js?v=" _site/index.html
+          grep -q "platform.js?v=" _site/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

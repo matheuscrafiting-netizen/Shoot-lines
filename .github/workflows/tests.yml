@@ -19,3 +19,9 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Robô joga partidas
         run: node tests/smoke.cjs
+      - name: Montar pacote para o CrazyGames
+        run: bash tools/build-crazygames.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shoot-lines-crazygames
+          path: dist/crazygames/
